@@ -1,4 +1,3 @@
-
 name: Auto Build & Release
 
 on:
@@ -25,11 +24,11 @@ jobs:
         include:
           - platform: Windows-x64
             runner: windows-latest
-            filename: RB-Windows-x64.exe
+            filename: Xomslx-Scanner-Windows-64x.exe
 
           - platform: Linux-x64
             runner: ubuntu-latest
-            filename: RB-Linux-x64
+            filename: Xomslx-Scanner-Linux-64x
 
     steps:
       - name: Checkout
@@ -94,14 +93,13 @@ jobs:
           path: release
           merge-multiple: true
 
-      - name: Generate Next Version
+      - name: Generate Version
         id: version
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          # Get the latest GitHub Release tag
           LATEST_TAG=$(gh release list \
             --repo "$GITHUB_REPOSITORY" \
             --limit 1 \
@@ -109,36 +107,45 @@ jobs:
             --jq '.[0].tagName // ""')
 
           if [ -z "$LATEST_TAG" ]; then
-            # First release
-            NEW_TAG="v1.0.0"
+            NEW_TAG="v2.0.0"
           else
             echo "Latest Release: $LATEST_TAG"
 
-            # Validate version format
             if [[ "$LATEST_TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
               MAJOR="${BASH_REMATCH[1]}"
               MINOR="${BASH_REMATCH[2]}"
               PATCH="${BASH_REMATCH[3]}"
 
-              # Increment patch version
               PATCH=$((PATCH + 1))
-
               NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
             else
-              echo "Error: Invalid release tag format: $LATEST_TAG"
+              echo "Invalid release tag: $LATEST_TAG"
               exit 1
             fi
           fi
 
-          echo "New Release: $NEW_TAG"
           echo "tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
+          echo "Next Release: $NEW_TAG"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          name: RB ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.tag }}
           target_commitish: ${{ github.sha }}
+          body: |
+            # Xomslx-Scanner
+
+            ## Downloads
+
+            - **Windows x64:** `Xomslx-Scanner-Windows-64x.exe`
+            - **Linux x64:** `Xomslx-Scanner-Linux-64x`
+
+            ## Version
+            ${{ steps.version.outputs.tag }}
+
+            ---
+            Automatically built and released using GitHub Actions.
           files: release/*
           generate_release_notes: true
           make_latest: true
