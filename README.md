@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🩸 XOMSLX SCANNER 🩸
+# 🩸 XOMLSX SCANNER 🩸
 
 ### Offensive Security Toolkit
 
@@ -23,7 +23,7 @@
 
 ## ✨ Overview
 
-**XOMSLX** is a comprehensive offensive security toolkit written in pure Python. It combines advanced network scanning techniques, attack modules, and OSINT capabilities into a single interactive interface.
+**XOMLSX** is a comprehensive offensive security toolkit written in pure Python. It combines advanced network scanning techniques, attack modules, and OSINT capabilities into a single interactive interface.
 
 Built for security researchers, red teamers, and ethical hackers who need a fast, flexible, and feature-rich toolkit without relying on heavy external frameworks.
 
