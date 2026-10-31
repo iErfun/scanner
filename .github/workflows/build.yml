@@ -31,14 +31,6 @@ jobs:
             runner: ubuntu-latest
             filename: RB-Linux-x64
 
-          - platform: macOS-ARM64
-            runner: macos-latest
-            filename: RB-macOS-ARM64
-
-          - platform: macOS-x64
-            runner: macos-15-intel
-            filename: RB-macOS-x64
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -92,6 +84,9 @@ jobs:
     if: success()
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+
     steps:
       - name: Download all builds
         uses: actions/download-artifact@v4
@@ -99,10 +94,44 @@ jobs:
           path: release
           merge-multiple: true
 
-      - name: Generate version
+      - name: Generate Next Version
         id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "tag=v1.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+
+          # Get the latest GitHub Release tag
+          LATEST_TAG=$(gh release list \
+            --repo "$GITHUB_REPOSITORY" \
+            --limit 1 \
+            --json tagName \
+            --jq '.[0].tagName // ""')
+
+          if [ -z "$LATEST_TAG" ]; then
+            # First release
+            NEW_TAG="v1.0.0"
+          else
+            echo "Latest Release: $LATEST_TAG"
+
+            # Validate version format
+            if [[ "$LATEST_TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              MAJOR="${BASH_REMATCH[1]}"
+              MINOR="${BASH_REMATCH[2]}"
+              PATCH="${BASH_REMATCH[3]}"
+
+              # Increment patch version
+              PATCH=$((PATCH + 1))
+
+              NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+            else
+              echo "Error: Invalid release tag format: $LATEST_TAG"
+              exit 1
+            fi
+          fi
+
+          echo "New Release: $NEW_TAG"
+          echo "tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
