@@ -1,37 +1,43 @@
 
-name: Build & Release
+name: Auto Build & Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
 jobs:
   build:
-    name: Build (${{ matrix.platform }})
+    name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}
 
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: windows-x64
+          - platform: Windows-x64
             runner: windows-latest
-            python: "3.11"
-            output: RB-Windows-x64.exe
+            filename: RB-Windows-x64.exe
 
-          - platform: linux-x64
+          - platform: Linux-x64
             runner: ubuntu-latest
-            python: "3.11"
-            output: RB-Linux-x64
+            filename: RB-Linux-x64
 
-          - platform: macos-arm64
+          - platform: macOS-ARM64
             runner: macos-latest
-            python: "3.11"
-            output: RB-macOS-arm64
+            filename: RB-macOS-ARM64
+
+          - platform: macOS-x64
+            runner: macos-15-intel
+            filename: RB-macOS-x64
 
     steps:
       - name: Checkout
@@ -40,23 +46,18 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
-          cache: pip
+          python-version: "3.11"
 
-      - name: Install system dependencies (Linux)
+      - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            patchelf \
-            ccache \
-            libpcap-dev
+          sudo apt-get install -y build-essential patchelf ccache libpcap-dev
 
-      - name: Install Python dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install nuitka ordered-set zstandard requests pysocks scapy
 
       - name: Build with Nuitka
         shell: bash
@@ -65,25 +66,30 @@ jobs:
             --mode=onefile \
             --assume-yes-for-downloads \
             --output-dir=dist \
-            --output-filename="${{ matrix.output }}" \
+            --output-filename="${{ matrix.filename }}" \
+            --follow-imports \
+            --include-module=brute \
+            --include-module=scanner \
+            --include-module=proxy_tester \
+            --include-module=word_list \
+            --include-module=xss \
+            --include-module=scan_win \
+            --include-package=osint \
             --include-package=scapy \
-            --include-package=paramiko \
-            --include-package=requests \
-            --include-package=socks \
             --include-package-data=scapy \
-            --remove-output \
             runner_code.py
 
-      - name: Upload build artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform }}
-          path: dist/${{ matrix.output }}
+          path: dist/${{ matrix.filename }}
           if-no-files-found: error
 
   release:
-    name: Publish GitHub Release
+    name: Create Automatic Release
     needs: build
+    if: success()
     runs-on: ubuntu-latest
 
     steps:
@@ -93,11 +99,19 @@ jobs:
           path: release
           merge-multiple: true
 
-      - name: Publish Release
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Generate version
+        id: version
         run: |
-          gh release create "${GITHUB_REF_NAME}" release/* \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "${GITHUB_REF_NAME}" \
-            --generate-notes
+          echo "tag=v1.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: RB ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          files: release/*
+          generate_release_notes: true
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
