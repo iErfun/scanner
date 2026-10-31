@@ -1,0 +1,103 @@
+
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x64
+            runner: windows-latest
+            python: "3.11"
+            output: RB-Windows-x64.exe
+
+          - platform: linux-x64
+            runner: ubuntu-latest
+            python: "3.11"
+            output: RB-Linux-x64
+
+          - platform: macos-arm64
+            runner: macos-latest
+            python: "3.11"
+            output: RB-macOS-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            patchelf \
+            ccache \
+            libpcap-dev
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build with Nuitka
+        shell: bash
+        run: |
+          python -m nuitka \
+            --mode=onefile \
+            --assume-yes-for-downloads \
+            --output-dir=dist \
+            --output-filename="${{ matrix.output }}" \
+            --include-package=scapy \
+            --include-package=paramiko \
+            --include-package=requests \
+            --include-package=socks \
+            --include-package-data=scapy \
+            --remove-output \
+            runner_code.py
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: dist/${{ matrix.output }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all builds
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Publish Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" release/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes
