@@ -24,11 +24,11 @@ jobs:
         include:
           - platform: Windows-x64
             runner: windows-latest
-            filename: Xomslx-Scanner-Windows-64x.exe
+            filename: XomScanner-Windows-64x.exe
 
           - platform: Linux-x64
             runner: ubuntu-latest
-            filename: Xomslx-Scanner-Linux-64x
+            filename: XomScanner-Linux-64x
 
     steps:
       - name: Checkout
@@ -138,8 +138,8 @@ jobs:
 
             ## Downloads
 
-            - **Windows x64:** `Xomslx-Scanner-Windows-64x.exe`
-            - **Linux x64:** `Xomslx-Scanner-Linux-64x`
+            - **Windows x64:** `XomScanner-Windows-64x.exe`
+            - **Linux x64:** `XomScanner-Linux-64x`
 
             ## Version
             ${{ steps.version.outputs.tag }}
