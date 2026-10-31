@@ -1,0 +1,7 @@
+requests
+scapy
+PySocks
+faker
+paramiko
+playwright
+requests[socks]
