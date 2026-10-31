@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🩸 XOMLEX SCANNER 🩸
+# 🩸 XOMSLX SCANNER 🩸
 
 ### Offensive Security Toolkit
 
@@ -23,7 +23,7 @@
 
 ## ✨ Overview
 
-**XOMLEX** is a comprehensive offensive security toolkit written in pure Python. It combines advanced network scanning techniques, attack modules, and OSINT capabilities into a single interactive interface.
+**XOMSLX** is a comprehensive offensive security toolkit written in pure Python. It combines advanced network scanning techniques, attack modules, and OSINT capabilities into a single interactive interface.
 
 Built for security researchers, red teamers, and ethical hackers who need a fast, flexible, and feature-rich toolkit without relying on heavy external frameworks.
 
@@ -89,7 +89,7 @@ Built for security researchers, red teamers, and ethical hackers who need a fast
 ## 📦 Project Structure
 
 ```text
-xomlex/
+Scanner/
 ├── runner_code.py          # Main interactive launcher
 ├── scanner.py              # Advanced network scanner engine
 ├── scan_win.py             # Windows / SMB focused scanning
@@ -115,8 +115,8 @@ xomlex/
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/xomlex.git
-cd xomlex
+git clone https://github.com/iErfun/scanner.git
+cd scanner
 ```
 
 ### 2. Install dependencies
