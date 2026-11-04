@@ -202,6 +202,9 @@ python -m osint.username_finder
 - Export results as clean text or professional HTML reports
 
 ### XSS Engine
+
+Menu options 7–9 add **Chain** features (Nested Chain with per-layer passwords, self-test, manual GET). Requires `cryptography`.
+
 - Multiple payload categories: Basic, WAF Bypass, Event Handlers, Encoding, Special
 - Intelligent payload mutation (case, HTML entities, percent-encoding, whitespace)
 - Optional Playwright-based confirmation of successful XSS

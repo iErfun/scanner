@@ -6,6 +6,10 @@ import json
 import random
 import string
 import threading
+import base64
+import hashlib
+import zlib
+from collections import deque
 import requests
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,10 +24,15 @@ try:
         verify_xss as xsspor_verify,
         all_payloads, detect_context, severity_for,
         crawl as xss_crawl,
+        ChainAdvanced, hash_password, packet_to_d, d_to_packet,
     )
     HAS_XSSPOR = True
 except ImportError:
     HAS_XSSPOR = False
+    ChainAdvanced = None
+    hash_password = None
+    packet_to_d = None
+    d_to_packet = None
 
 
 class C:
@@ -1307,6 +1316,269 @@ def run_advanced_engine(method_type="GET"):
     input(f"\n{C.D}Enter...{C.R}")
 
 
+
+# ═══════════════════════════════════════════════════════════════════
+#  Chain features (from aac2 / Nested Chain)
+# ═══════════════════════════════════════════════════════════════════
+
+CHAIN_CALLBACK = {"url": "", "password": "", "enabled": False, "compress": True}
+
+
+def print_header(title: str) -> None:
+    print(f"\n{C.PUR}{C.B}{'=' * 60}{C.R}")
+    print(f"{C.PUR}{C.B}  {title}{C.R}")
+    print(f"{C.PUR}{C.B}{'=' * 60}{C.R}")
+
+
+def _color_payload(text, idx):
+    colors = [C.GRN, C.CYN, C.YEL, C.PUR, C.GLD, C.NEO, C.CRM]
+    return colors[idx % len(colors)] + str(text) + C.R
+
+
+def _split_payload_stages(payload: str):
+    """Split payload into stage chunks (whitespace). Single token = one stage."""
+    payload = payload if payload is not None else ""
+    parts = [p for p in payload.split(" ") if p != ""]
+    return parts if parts else [""]
+
+
+def send_chain_blob(blob, label="findings"):
+    if not CHAIN_CALLBACK.get("enabled") or not HAS_XSSPOR:
+        return False
+    key = hash_password(CHAIN_CALLBACK["password"])
+    salt = os.urandom(16)
+    sender = ChainAdvanced(initial_key=key, session_salt=salt, compress=CHAIN_CALLBACK.get("compress", True))
+    packet = sender.encode(blob if isinstance(blob, bytes) else str(blob).encode())
+    d = packet_to_d(packet)
+    salt_b64 = base64.urlsafe_b64encode(salt).decode().rstrip("=")
+    params = {"c": "aac2", "s": salt_b64, "d": d, "l": label}
+    try:
+        r = requests.get(
+            CHAIN_CALLBACK["url"], params=params, timeout=15,
+            verify=False, allow_redirects=False,
+            headers={"User-Agent": random.choice(USER_AGENTS)},
+        )
+        print(f"{C.GRN}[+] Chain sent ({label}) HTTP {r.status_code}  d_len={len(d)}{C.R}")
+        return True
+    except Exception as e:
+        print(f"{C.CRM}[!] Chain send failed: {str(e)[:120]}{C.R}")
+        return False
+
+
+def chain_self_test():
+    if not HAS_XSSPOR:
+        print(f"{C.CRM}[!] xsspor/chain not available{C.R}")
+        return
+    print_header("Chain self-test")
+    pw = input(f"{C.NEO}Password{C.R} {C.D}(default test1234){C.R}: ").strip() or "test1234"
+    key = hash_password(pw)
+    salt = os.urandom(16)
+    sender = ChainAdvanced(initial_key=key, session_salt=salt, compress=True)
+    receiver = ChainAdvanced(initial_key=key, session_salt=salt, compress=True)
+    msg = input(f"{C.NEO}Message{C.R}: ").strip() or "hello"
+    pkt = sender.encode(msg.encode())
+    out = receiver.decode(pkt)
+    print(f"{C.GRN}[+] encode/decode OK: {out!r}{C.R}")
+
+
+def send_manual_chain():
+    if not HAS_XSSPOR:
+        print(f"{C.CRM}[!] xsspor/chain not available{C.R}")
+        return
+    print(f"\n{C.NEO}Manual Chain GET{C.R}")
+    url = input(f"{C.NEO}Callback URL{C.R}: ").strip()
+    if not url.startswith(("http://", "https://")):
+        print(f"{C.CRM}[!] bad url{C.R}")
+        return
+    pw = input(f"{C.NEO}Password{C.R}: ").strip()
+    if not pw:
+        print(f"{C.CRM}[!] empty password{C.R}")
+        return
+    text = input(f"{C.NEO}Plaintext{C.R}: ").strip() or "ping"
+    CHAIN_CALLBACK.update({"url": url, "password": pw, "enabled": True, "compress": True})
+    send_chain_blob(text.encode(), label="manual")
+
+
+def build_hierarchical_chain(layers, compress=True):
+    """
+    Build nested packets with PER-LAYER passwords.
+    layers: outer-first list of dicts {name, password, payload}
+    """
+    if not layers:
+        raise ValueError("no layers")
+
+    child = None
+    built = []
+
+    for idx in range(len(layers) - 1, -1, -1):
+        L = layers[idx]
+        name = L["name"]
+        password = L["password"]
+        payload = L["payload"]
+        key = hash_password(password)
+        salt = os.urandom(16)
+        key_fp = hashlib.sha256(key).hexdigest()
+
+        stages = _split_payload_stages(payload)
+        stage_plain = list(stages)
+
+        transport = ChainAdvanced(initial_key=key, session_salt=salt, compress=compress)
+        body_simple = {
+            "type": "layer",
+            "name": name,
+            "stages": stage_plain,
+            "child": child,
+        }
+        outer_packet = transport.encode(
+            json.dumps(body_simple, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        )
+        d = packet_to_d(outer_packet)
+        salt_b64 = base64.urlsafe_b64encode(salt).decode("ascii").rstrip("=")
+        child = {
+            "password": password,
+            "salt": salt_b64,
+            "d": d,
+            "name": name,
+            "key_fp": key_fp,
+            "stage_count": len(stage_plain),
+        }
+        built.append({
+            "name": name,
+            "password": password,
+            "key_fp": key_fp,
+            "salt": salt_b64,
+            "d": d,
+            "stages": stage_plain,
+            "packet": outer_packet,
+        })
+
+    outer = built[-1]
+    return outer, list(reversed(built))
+
+
+def peel_hierarchical(outer_password, outer_salt_b64, outer_d):
+    """Peel nest using only the outermost password."""
+    padding = "=" * ((4 - len(outer_salt_b64) % 4) % 4)
+    salt = base64.urlsafe_b64decode(outer_salt_b64 + padding)
+    key = hash_password(outer_password)
+    current_d = outer_d
+    current_key = key
+    current_salt = salt
+    recovered = []
+
+    for _ in range(64):
+        chain = ChainAdvanced(initial_key=current_key, session_salt=current_salt, compress=True)
+        pkt = d_to_packet(current_d)
+        plain = chain.decode(pkt)
+        obj = json.loads(plain.decode("utf-8"))
+        if obj.get("type") != "layer":
+            raise ValueError("unexpected layer type")
+        name = obj.get("name", "?")
+        stages = obj.get("stages") or []
+        recovered.append({"name": name, "stages": stages})
+        child = obj.get("child")
+        if not child:
+            break
+        current_d = child["d"]
+        current_key = hash_password(child["password"])
+        pad = "=" * ((4 - len(child["salt"]) % 4) % 4)
+        current_salt = base64.urlsafe_b64decode(child["salt"] + pad)
+    return recovered
+
+
+def send_nested_payloads_chain():
+    """Option 7 — Nested Chain (per-layer passwords)."""
+    if not HAS_XSSPOR:
+        print(f"{C.CRM}[!] xsspor/chain not available{C.R}")
+        return
+
+    print_header("Option 7 - Nested Chain (per-layer passwords)")
+    print(f"{C.D}Outer packet carries the next password: A holds B, B holds C, ...{C.R}\n")
+
+    raw_n = input(f"{C.NEO}How many layers / packets? (1-12){C.R}: ").strip()
+    try:
+        n = int(raw_n)
+    except ValueError:
+        n = 1
+    n = max(1, min(12, n))
+
+    layers = []
+    print(f"\n{C.GLD}Enter layers OUTER -> INNER (first = A / outer){C.R}")
+    for i in range(n):
+        print(f"\n{C.PUR}--- Layer {i+1}/{n} ---{C.R}")
+        name = input(f"  {C.NEO}Name{C.R} {C.D}(e.g. la / nm / mna){C.R}: ").strip() or f"L{i+1}"
+        pw = input(f"  {C.NEO}Password for [{name}]{C.R}: ").strip()
+        if not pw:
+            print(f"{C.CRM}[!] empty password — abort{C.R}")
+            return
+        payload = input(f"  {C.NEO}Payload for [{name}]{C.R}: ").strip() or name
+        key_fp = hashlib.sha256(hash_password(pw)).hexdigest()
+        print(f"  {C.GRN}[+][{name}] key fingerprint:{C.R} {key_fp[:32]}...")
+        print(f"  {C.CYN}payload:{C.R} {_color_payload(payload[:120], i)}")
+        layers.append({"name": name, "password": pw, "payload": payload})
+
+    print(f"\n{C.NEO}Building hierarchy...{C.R}")
+    try:
+        outer, meta = build_hierarchical_chain(layers, compress=True)
+    except Exception as e:
+        print(f"{C.CRM}[!] Build failed: {e}{C.R}")
+        return
+
+    print(f"\n{C.B}{'='*55}{C.R}")
+    print(f"{C.B}  Layer map (OUTER -> INNER){C.R}")
+    print(f"{C.B}{'='*55}{C.R}")
+    for i, m in enumerate(meta):
+        print(f"  {C.GLD}{i}{C.R} [{_color_payload(m['name'], i)}]  "
+              f"stages={len(m['stages'])}  d_len={len(m['d'])}  "
+              f"fp={m['key_fp'][:16]}...")
+        if i < len(meta) - 1:
+            print(f"      {C.YEL}-> holds password of [{meta[i+1]['name']}]{C.R}")
+
+    print(f"\n{C.B}{'='*55}{C.R}")
+    print(f"{C.B}  Decode Verification{C.R}")
+    print(f"{C.B}{'='*55}{C.R}\n")
+    try:
+        recovered = peel_hierarchical(layers[0]["password"], outer["salt"], outer["d"])
+        for rec in recovered:
+            print(f"{C.PUR}[{rec['name']}]{C.R}")
+            for si, st in enumerate(rec["stages"]):
+                print(f"  Stage {si}: {_color_payload(st, si)}")
+            print()
+        print(f"{C.GRN}[+] Peel OK with OUTER password only — {len(recovered)} layers{C.R}")
+    except Exception as e:
+        print(f"{C.CRM}[!] Peel failed: {e}{C.R}")
+        return
+
+    print(f"\n{C.GRN}[+] Outer d:{C.R} {C.D}{outer['d'][:96]}{'...' if len(outer['d'])>96 else ''}{C.R}")
+    print(f"{C.GRN}[+] Outer salt (s):{C.R} {outer['salt']}")
+    print(f"{C.GRN}[+] Outer key fp:{C.R} {outer['key_fp']}")
+
+    if input(f"\n{C.NEO}Send outer packet via GET? (y/n){C.R}: ").strip().lower() != "y":
+        print(f"{C.YEL}[!] Local only — not sent{C.R}")
+        return
+    url = input(f"{C.NEO}Callback URL{C.R}: ").strip()
+    if not url.startswith(("http://", "https://")):
+        print(f"{C.CRM}[!] bad URL{C.R}")
+        return
+    params = {
+        "c": "aac2-nest",
+        "s": outer["salt"],
+        "d": outer["d"],
+        "l": f"nest{len(meta)}",
+        "fp": outer["key_fp"][:16],
+        "n": layers[0]["name"],
+    }
+    try:
+        r = requests.get(
+            url, params=params, timeout=20, verify=False, allow_redirects=False,
+            headers={"User-Agent": random.choice(USER_AGENTS)},
+        )
+        print(f"{C.GRN}[+] Sent HTTP {r.status_code}  d_len={len(outer['d'])}{C.R}")
+    except Exception as e:
+        print(f"{C.CRM}[!] Send failed: {str(e)[:120]}{C.R}")
+
+
+
 def run():
     while True:
         banner()
@@ -1317,6 +1589,9 @@ def run():
         print(f"{C.PUR}|{C.R}  {C.GLD}4{C.R}  {C.YEL}Scan POST (BYPASS){C.R}                     {C.PUR}|{C.R}")
         print(f"{C.PUR}|{C.R}  {C.GLD}5{C.R}  {C.GRN}Advanced Engine GET  (xsspor){C.R}           {C.PUR}|{C.R}")
         print(f"{C.PUR}|{C.R}  {C.GLD}6{C.R}  {C.GRN}Advanced Engine POST (xsspor){C.R}           {C.PUR}|{C.R}")
+        print(f"{C.PUR}|{C.R}  {C.GLD}7{C.R}  {C.PUR}Nested Chain (per-layer passwords){C.R}      {C.PUR}|{C.R}")
+        print(f"{C.PUR}|{C.R}  {C.GLD}8{C.R}  {C.CYN}Chain local self-test{C.R}                  {C.PUR}|{C.R}")
+        print(f"{C.PUR}|{C.R}  {C.GLD}9{C.R}  {C.CYN}Chain manual GET{C.R}                        {C.PUR}|{C.R}")
         print(f"{C.PUR}|{C.R}  {C.GLD}0{C.R}  {C.CRM}Exit{C.R}                                   {C.PUR}|{C.R}")
         print(f"{C.PUR}+{'-'*62}+{C.R}")
         print(f"\n{C.GLD}{C.B}>>{C.R} ", end="")
@@ -1336,6 +1611,15 @@ def run():
             run_advanced_engine("GET")
         elif c == "6":
             run_advanced_engine("POST")
+        elif c == "7":
+            send_nested_payloads_chain()
+            input(f"\n{C.D}Enter...{C.R}")
+        elif c == "8":
+            chain_self_test()
+            input(f"\n{C.D}Enter...{C.R}")
+        elif c == "9":
+            send_manual_chain()
+            input(f"\n{C.D}Enter...{C.R}")
         else:
             print(f"{C.CRM}[!] Invalid{C.R}"); time.sleep(1)
 
