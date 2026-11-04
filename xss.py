@@ -16,7 +16,26 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from html.parser import HTMLParser
 
-# New modular XSS engine (xsspor package)
+# ---------------------------------------------------------------------------
+# Ensure project root (folder that contains xss.py + xsspor/) is on sys.path
+# so `import xsspor` works no matter how / from where this file is launched.
+# ---------------------------------------------------------------------------
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _THIS_DIR and _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+# Do NOT add parent dir — avoids colliding with other packages named scanner/socks/etc.
+
+# ---------------------------------------------------------------------------
+# Load xsspor package (engine + chain). Show real error if it fails.
+# ---------------------------------------------------------------------------
+HAS_XSSPOR = False
+_XSSPOR_ERR = None
+DetectionEngine = ScanConfig = Finding = None
+XssProxyPool = None
+xsspor_verify = None
+all_payloads = detect_context = severity_for = xss_crawl = None
+ChainAdvanced = hash_password = packet_to_d = d_to_packet = None
+
 try:
     from xsspor import (
         DetectionEngine, ScanConfig, Finding,
@@ -27,12 +46,41 @@ try:
         ChainAdvanced, hash_password, packet_to_d, d_to_packet,
     )
     HAS_XSSPOR = True
-except ImportError:
-    HAS_XSSPOR = False
-    ChainAdvanced = None
-    hash_password = None
-    packet_to_d = None
-    d_to_packet = None
+except Exception as _e1:
+    _XSSPOR_ERR = _e1
+    # Fallback: load submodules one-by-one so a single missing dep does not kill everything
+    try:
+        from xsspor.engine import DetectionEngine, ScanConfig, Finding
+        from xsspor.proxy import ProxyPool as XssProxyPool
+        from xsspor.browser import verify_xss as xsspor_verify
+        from xsspor.payloads import all_payloads
+        from xsspor.context import detect_context, severity_for
+        from xsspor.crawler import crawl as xss_crawl
+        HAS_XSSPOR = True
+        _XSSPOR_ERR = None
+    except Exception as _e2:
+        _XSSPOR_ERR = _e2
+        HAS_XSSPOR = False
+    try:
+        from xsspor.chain import ChainAdvanced, hash_password, packet_to_d, d_to_packet
+    except Exception as _e3:
+        if _XSSPOR_ERR is None:
+            _XSSPOR_ERR = _e3
+
+
+def _require_xsspor(feature="xsspor"):
+    """Raise a clear message if package is missing."""
+    if HAS_XSSPOR and (feature != "chain" or ChainAdvanced is not None):
+        return True
+    print(f"\n{C.CRM}[!] {feature} not available{C.R}")
+    if _XSSPOR_ERR is not None:
+        print(f"{C.YEL}    reason: {type(_XSSPOR_ERR).__name__}: {_XSSPOR_ERR}{C.R}")
+    print(f"{C.D}    Fix:")
+    print(f"    1) Run from the folder that contains xss.py AND xsspor/")
+    print(f"       cd <project> && python xss.py")
+    print(f"    2) Install deps:  pip install cryptography requests")
+    print(f"    3) Check folder:  ls xsspor/engine.py xsspor/chain.py{C.R}")
+    return False
 
 
 class C:
@@ -1015,7 +1063,13 @@ def banner():
   XSS Scanner
 {C.R}""")
     print(f"{C.NEO}{C.B}{'XSS Scanner + Smart Payloads + Browser Verify'.center(66)}{C.R}")
-    print(f"{C.CRM}{'LAB ONLY - AUTHORIZED TESTING'.center(66)}{C.R}\n")
+    print(f"{C.CRM}{'LAB ONLY - AUTHORIZED TESTING'.center(66)}{C.R}")
+    if HAS_XSSPOR and ChainAdvanced is not None:
+        print(f"{C.GRN}{'[xsspor OK] [chain OK]'.center(66)}{C.R}\n")
+    elif HAS_XSSPOR:
+        print(f"{C.YEL}{'[xsspor OK] [chain MISSING — pip install cryptography]'.center(66)}{C.R}\n")
+    else:
+        print(f"{C.CRM}{'[xsspor MISSING — see error on option 5-9]'.center(66)}{C.R}\n")
 
 
 def print_finding(res):
@@ -1177,8 +1231,7 @@ def run_scan(method_type="GET", adaptive=False):
 
 def run_advanced_engine(method_type="GET"):
     """Run the new modular DetectionEngine from xsspor package."""
-    if not HAS_XSSPOR:
-        print(f"{C.CRM}[!] xsspor package not available{C.R}")
+    if not _require_xsspor("xsspor package"):
         input(f"\n{C.D}Enter...{C.R}")
         return
 
@@ -1343,7 +1396,7 @@ def _split_payload_stages(payload: str):
 
 
 def send_chain_blob(blob, label="findings"):
-    if not CHAIN_CALLBACK.get("enabled") or not HAS_XSSPOR:
+    if not CHAIN_CALLBACK.get("enabled") or ChainAdvanced is None:
         return False
     key = hash_password(CHAIN_CALLBACK["password"])
     salt = os.urandom(16)
@@ -1366,8 +1419,7 @@ def send_chain_blob(blob, label="findings"):
 
 
 def chain_self_test():
-    if not HAS_XSSPOR:
-        print(f"{C.CRM}[!] xsspor/chain not available{C.R}")
+    if not _require_xsspor("xsspor/chain"):
         return
     print_header("Chain self-test")
     pw = input(f"{C.NEO}Password{C.R} {C.D}(default test1234){C.R}: ").strip() or "test1234"
@@ -1382,8 +1434,7 @@ def chain_self_test():
 
 
 def send_manual_chain():
-    if not HAS_XSSPOR:
-        print(f"{C.CRM}[!] xsspor/chain not available{C.R}")
+    if not _require_xsspor("xsspor/chain"):
         return
     print(f"\n{C.NEO}Manual Chain GET{C.R}")
     url = input(f"{C.NEO}Callback URL{C.R}: ").strip()
@@ -1488,8 +1539,7 @@ def peel_hierarchical(outer_password, outer_salt_b64, outer_d):
 
 def send_nested_payloads_chain():
     """Option 7 — Nested Chain (per-layer passwords)."""
-    if not HAS_XSSPOR:
-        print(f"{C.CRM}[!] xsspor/chain not available{C.R}")
+    if not _require_xsspor("xsspor/chain"):
         return
 
     print_header("Option 7 - Nested Chain (per-layer passwords)")

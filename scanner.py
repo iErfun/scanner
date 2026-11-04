@@ -12,7 +12,10 @@ from ipaddress import ip_network, ip_address
 from itertools import cycle
 from urllib.parse import urlparse, parse_qs, urlunparse
 import logging
-import socks
+try:
+    import socks
+except ImportError:
+    socks = None  # optional: pip install PySocks
 import ssl
 import requests
 
@@ -813,6 +816,9 @@ def analyze_scan_result(open_ports, banners):
 
 def enable_tor():
     result = {"connected": False, "ip": None, "country": None, "original_ip": None, "verified": False}
+    if socks is None:
+        print(Colors.RED + "[-] PySocks not installed. Run: pip install PySocks" + Colors.RESET)
+        return result
     print(Colors.GOLD + "\n[*] Connecting to Tor..." + Colors.RESET)
     original_ip = get_ip_retry()
     result["original_ip"] = original_ip

@@ -12,9 +12,9 @@ from urllib.parse import urlparse
 
 try:
     import socks
-
     HAS_SOCKS = True
 except ImportError:
+    socks = None
     HAS_SOCKS = False
 
 

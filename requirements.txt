@@ -1,9 +1,9 @@
-requests
+requests>=2.28.0
+PySocks>=1.7.1
+cryptography>=41.0.0
+urllib3
 scapy
-PySocks
 faker
 paramiko
 playwright
 requests[socks]
-cryptography
-urllib3
