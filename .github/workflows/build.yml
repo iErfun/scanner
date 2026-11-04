@@ -134,7 +134,7 @@ jobs:
           name: Release ${{ steps.version.outputs.tag }}
           target_commitish: ${{ github.sha }}
           body: |
-            # Xomslx-Scanner
+            # XomScanner
 
             ## Downloads
 
