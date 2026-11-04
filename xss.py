@@ -67,19 +67,187 @@ except Exception as _e1:
         if _XSSPOR_ERR is None:
             _XSSPOR_ERR = _e3
 
+# ---------------------------------------------------------------------------
+# Inline Chain fallback (for frozen onefile builds where xsspor is missing)
+# ---------------------------------------------------------------------------
+if ChainAdvanced is None or not callable(hash_password):
+    try:
+        import hmac as _hmac
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM as _AESGCM
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF as _HKDF
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC as _PBKDF2
+        from cryptography.hazmat.primitives import hashes as _hashes
+
+        def hash_password(password, salt=None, iterations=100_000):
+            if not isinstance(password, str) or not password:
+                raise ValueError("password must be non-empty string")
+            if salt is None:
+                salt = b"aac2-chain-v2.1-static-salt"
+            kdf = _PBKDF2(
+                algorithm=_hashes.SHA256(),
+                length=32,
+                salt=salt,
+                iterations=iterations,
+            )
+            return kdf.derive(password.encode("utf-8"))
+
+        def packet_to_d(packet):
+            raw = json.dumps(packet, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+        def d_to_packet(d):
+            padding = "=" * ((4 - len(d) % 4) % 4)
+            raw = base64.urlsafe_b64decode(d + padding)
+            return json.loads(raw.decode("utf-8"))
+
+        class ChainAdvanced:
+            VERSION = "2.1"
+            BLOCK_SIZE = 64
+            MAX_REPLAY_WINDOW = 1000
+            PBKDF2_ITERATIONS = 100_000
+
+            def __init__(self, initial_key=None, session_salt=None, compress=False, created_at=None):
+                if initial_key is None:
+                    initial_key = os.urandom(32)
+                if not isinstance(initial_key, bytes) or len(initial_key) != 32:
+                    raise ValueError("initial_key must be 32 bytes")
+                if session_salt is None:
+                    session_salt = os.urandom(16)
+                if not isinstance(session_salt, bytes) or len(session_salt) < 8:
+                    raise ValueError("session_salt must be at least 8 bytes")
+                self.initial_key = initial_key
+                self.current_key = initial_key
+                self.session_salt = session_salt
+                self.stage = 0
+                self.compress = compress
+                self.created_at = created_at if created_at is not None else time.time()
+                self.chain_hash = hashlib.sha256(session_salt).digest()
+                self.seen_stages = deque(maxlen=self.MAX_REPLAY_WINDOW)
+
+            def _derive_stage_key(self):
+                hkdf = _HKDF(
+                    algorithm=_hashes.SHA256(), length=32,
+                    salt=self.session_salt, info=b"stage|" + str(self.stage).encode(),
+                )
+                return hkdf.derive(self.current_key)
+
+            def _ratchet(self):
+                hkdf = _HKDF(
+                    algorithm=_hashes.SHA256(), length=32,
+                    salt=self.session_salt, info=b"ratchet|" + str(self.stage).encode(),
+                )
+                self.current_key = hkdf.derive(self.current_key)
+                self.chain_hash = hashlib.sha256(self.chain_hash + self.current_key).digest()
+
+            def _pad(self, data):
+                pad_len = self.BLOCK_SIZE - (len(data) % self.BLOCK_SIZE)
+                if pad_len == 0:
+                    pad_len = self.BLOCK_SIZE
+                return data + bytes([pad_len] * pad_len)
+
+            def _unpad(self, data):
+                if not data:
+                    raise ValueError("empty data")
+                pad_len = data[-1]
+                if pad_len < 1 or pad_len > self.BLOCK_SIZE:
+                    raise ValueError(f"invalid padding length: {pad_len}")
+                if data[-pad_len:] != bytes([pad_len] * pad_len):
+                    raise ValueError("padding corruption")
+                return data[:-pad_len]
+
+            def _compute_mac(self, data):
+                return _hmac.new(self.current_key, data, hashlib.sha256).digest()
+
+            def _build_aad(self):
+                return (
+                    b"v" + self.VERSION.encode()
+                    + b"|stage:" + str(self.stage).encode()
+                    + b"|hash:" + self.chain_hash[:8].hex().encode()
+                )
+
+            def encode(self, data):
+                if not isinstance(data, (bytes, bytearray)):
+                    raise TypeError("data must be bytes")
+                if self.compress:
+                    data = zlib.compress(data, level=9)
+                padded = self._pad(data)
+                stage_key = self._derive_stage_key()
+                nonce = os.urandom(12)
+                aesgcm = _AESGCM(stage_key)
+                ciphertext = aesgcm.encrypt(nonce, padded, self._build_aad())
+                mac = self._compute_mac(ciphertext)
+                packet = {
+                    "v": self.VERSION,
+                    "stage": self.stage,
+                    "nonce": nonce.hex(),
+                    "ciphertext": ciphertext.hex(),
+                    "mac": mac.hex(),
+                }
+                self._ratchet()
+                self.stage += 1
+                return packet
+
+            def decode(self, packet):
+                if packet.get("v") != self.VERSION:
+                    raise ValueError(f"unsupported version: {packet.get('v')}")
+                stage = packet.get("stage")
+                if stage != self.stage:
+                    raise ValueError(f"stage mismatch: expected {self.stage}, got {stage}")
+                if stage in self.seen_stages:
+                    raise ValueError(f"replay detected for stage {stage}")
+                stage_key = self._derive_stage_key()
+                nonce = bytes.fromhex(packet["nonce"])
+                ciphertext = bytes.fromhex(packet["ciphertext"])
+                mac = bytes.fromhex(packet["mac"])
+                if not _hmac.compare_digest(mac, self._compute_mac(ciphertext)):
+                    raise ValueError("MAC verification failed")
+                aesgcm = _AESGCM(stage_key)
+                padded = aesgcm.decrypt(nonce, ciphertext, self._build_aad())
+                data = self._unpad(padded)
+                if self.compress:
+                    data = zlib.decompress(data)
+                self.seen_stages.append(stage)
+                self._ratchet()
+                self.stage += 1
+                return data
+
+            def reset(self):
+                self.current_key = self.initial_key
+                self.stage = 0
+                self.chain_hash = hashlib.sha256(self.session_salt).digest()
+                self.seen_stages.clear()
+
+        # mark chain usable via inline fallback
+        _XSSPOR_ERR = None
+    except Exception as _e_inline:
+        # cryptography missing — leave ChainAdvanced as None
+        if _XSSPOR_ERR is None:
+            _XSSPOR_ERR = _e_inline
+
 
 def _require_xsspor(feature="xsspor"):
-    """Raise a clear message if package is missing."""
-    if HAS_XSSPOR and (feature != "chain" or ChainAdvanced is not None):
+    """Return True if required components are available; else print help and False."""
+    need_chain = "chain" in feature.lower()
+    engine_ok = HAS_XSSPOR and DetectionEngine is not None
+    chain_ok = (
+        ChainAdvanced is not None
+        and callable(hash_password)
+        and callable(packet_to_d)
+        and callable(d_to_packet)
+    )
+    if need_chain and chain_ok:
+        return True
+    if (not need_chain) and engine_ok:
         return True
     print(f"\n{C.CRM}[!] {feature} not available{C.R}")
     if _XSSPOR_ERR is not None:
         print(f"{C.YEL}    reason: {type(_XSSPOR_ERR).__name__}: {_XSSPOR_ERR}{C.R}")
+    if need_chain and not chain_ok:
+        print(f"{C.YEL}    ChainAdvanced/hash_password is None (package not bundled or cryptography missing){C.R}")
     print(f"{C.D}    Fix:")
-    print(f"    1) Run from the folder that contains xss.py AND xsspor/")
-    print(f"       cd <project> && python xss.py")
-    print(f"    2) Install deps:  pip install cryptography requests")
-    print(f"    3) Check folder:  ls xsspor/engine.py xsspor/chain.py{C.R}")
+    print(f"    1) Run from folder that contains xss.py AND xsspor/")
+    print(f"    2) pip install cryptography PySocks requests")
+    print(f"    3) Rebuild exe with xsspor/ included{C.R}")
     return False
 
 
@@ -1064,12 +1232,16 @@ def banner():
 {C.R}""")
     print(f"{C.NEO}{C.B}{'XSS Scanner + Smart Payloads + Browser Verify'.center(66)}{C.R}")
     print(f"{C.CRM}{'LAB ONLY - AUTHORIZED TESTING'.center(66)}{C.R}")
-    if HAS_XSSPOR and ChainAdvanced is not None:
+    chain_ok = ChainAdvanced is not None and callable(hash_password)
+    eng_ok = HAS_XSSPOR and DetectionEngine is not None
+    if eng_ok and chain_ok:
         print(f"{C.GRN}{'[xsspor OK] [chain OK]'.center(66)}{C.R}\n")
-    elif HAS_XSSPOR:
+    elif chain_ok and not eng_ok:
+        print(f"{C.YEL}{'[chain OK] [engine missing — options 5-6 limited]'.center(66)}{C.R}\n")
+    elif eng_ok and not chain_ok:
         print(f"{C.YEL}{'[xsspor OK] [chain MISSING — pip install cryptography]'.center(66)}{C.R}\n")
     else:
-        print(f"{C.CRM}{'[xsspor MISSING — see error on option 5-9]'.center(66)}{C.R}\n")
+        print(f"{C.CRM}{'[xsspor/chain MISSING — pip install cryptography]'.center(66)}{C.R}\n")
 
 
 def print_finding(res):
