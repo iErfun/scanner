@@ -94,7 +94,16 @@ Scanner/
 ├── scanner.py              # Advanced network scanner engine
 ├── scan_win.py             # Windows / SMB focused scanning
 ├── brute.py                # Credential bruteforce module
-├── xss.py                  # XSS detection & verification
+├── xss.py                  # XSS detection & verification (UI + legacy + advanced)
+├── xsspor/                 # Modular advanced XSS engine (3-layer detection)
+│   ├── __init__.py
+│   ├── engine.py           # DetectionEngine, ScanConfig, Finding
+│   ├── payloads.py         # Categorized payload database
+│   ├── context.py          # Reflection context detection
+│   ├── browser.py          # Playwright verification
+│   ├── proxy.py            # ProxyPool rotation
+│   ├── crawler.py          # Same-origin param discovery
+│   └── chain.py            # Crypto utilities (AES-GCM)
 ├── word_list.py            # Custom wordlist generator
 ├── proxy_tester.py         # Proxy validation utility
 ├── email_checker.py        # Email validation & checking
@@ -135,6 +144,7 @@ pip install -r requirements.txt
 | `faker`       | Realistic User-Agent generation  |
 | `paramiko`    | SSH bruteforce                   |
 | `playwright`  | Browser-based XSS verification   |
+| `cryptography`| AES-GCM / key derivation (chain) |
 
 ```bash
 # Optional but recommended

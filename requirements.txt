@@ -5,3 +5,5 @@ faker
 paramiko
 playwright
 requests[socks]
+cryptography
+urllib3

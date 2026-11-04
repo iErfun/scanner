@@ -12,6 +12,19 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from html.parser import HTMLParser
 
+# New modular XSS engine (xsspor package)
+try:
+    from xsspor import (
+        DetectionEngine, ScanConfig, Finding,
+        ProxyPool as XssProxyPool,
+        verify_xss as xsspor_verify,
+        all_payloads, detect_context, severity_for,
+        crawl as xss_crawl,
+    )
+    HAS_XSSPOR = True
+except ImportError:
+    HAS_XSSPOR = False
+
 
 class C:
     R='\033[0m'; B='\033[1m'; D='\033[2m'
@@ -1153,6 +1166,147 @@ def run_scan(method_type="GET", adaptive=False):
     input(f"\n{C.D}Enter...{C.R}")
 
 
+def run_advanced_engine(method_type="GET"):
+    """Run the new modular DetectionEngine from xsspor package."""
+    if not HAS_XSSPOR:
+        print(f"{C.CRM}[!] xsspor package not available{C.R}")
+        input(f"\n{C.D}Enter...{C.R}")
+        return
+
+    print(f"\n{C.PUR}{'='*70}{C.R}")
+    print(f"{C.B}{C.WHT}  ADVANCED ENGINE ({method_type}) — 3-Layer Detection{C.R}")
+    print(f"{C.PUR}{'='*70}{C.R}\n")
+
+    url = input(f"{C.NEO}Target URL{C.R}\n{C.GLD}>>{C.R} ").strip()
+    if not url:
+        return
+    if not url.startswith(("http://", "https://")):
+        url = "http://" + url
+
+    data = None
+    if method_type == "POST":
+        print(f"\n{C.NEO}POST fields{C.R} {C.D}(name=value, comma separated){C.R}")
+        print(f"{C.GLD}>>{C.R} ", end="")
+        raw = input().strip()
+        data = {}
+        for part in raw.split(","):
+            if "=" in part:
+                k, v = part.split("=", 1)
+                data[k.strip()] = v.strip()
+        if not data:
+            print(f"{C.CRM}[!] No valid fields{C.R}")
+            input(f"\n{C.D}Enter...{C.R}")
+            return
+
+    print(f"{C.NEO}Threads{C.R} {C.D}(default 3){C.R}: ", end="")
+    t = input().strip()
+    threads = int(t) if t.isdigit() else 3
+    threads = max(1, min(20, threads))
+
+    print(f"{C.NEO}Delay sec{C.R} {C.D}(default 0.5){C.R}: ", end="")
+    d = input().strip()
+    try:
+        delay = float(d) if d else 0.5
+    except ValueError:
+        delay = 0.5
+
+    print(f"{C.NEO}Browser verify?{C.R} {C.D}(y/n, default n){C.R}: ", end="")
+    browser_verify = input().strip().lower() == "y"
+
+    print(f"{C.NEO}Smart context?{C.R} {C.D}(y/n, default y){C.R}: ", end="")
+    smart = input().strip().lower() != "n"
+
+    # optional crawl
+    print(f"{C.NEO}Crawl for more params?{C.R} {C.D}(y/n, default n){C.R}: ", end="")
+    do_crawl = input().strip().lower() == "y"
+    extra_urls = []
+    if do_crawl:
+        try:
+            extra_urls = xss_crawl(url, depth=1, max_urls=20)
+            print(f"  {C.GRN}[+] Found {len(extra_urls)} parameterized URLs{C.R}")
+        except Exception as e:
+            print(f"  {C.YEL}[!] Crawl error: {e}{C.R}")
+
+    config = ScanConfig(
+        url=url,
+        method=method_type,
+        data=data,
+        threads=threads,
+        delay=delay,
+        browser_verify=browser_verify,
+        smart_context=smart,
+    )
+
+    def on_finding(f: Finding):
+        color = C.RED if f.severity in ("CRITICAL", "HIGH") else (
+            C.YEL if f.severity == "MEDIUM" else C.GRN
+        )
+        conf = f.confirmed
+        if conf is True:
+            badge = f"{C.GRN}[VERIFIED]{C.R}"
+        elif conf is False:
+            badge = f"{C.YEL}[REFLECT]{C.R}"
+        else:
+            badge = f"{C.D}[?]{C.R}"
+        print(f"  {color}[{f.severity:<8}]{C.R} {badge} "
+              f"{C.GLD}{f.method:<4}{C.R} {C.NEO}{f.field:<12}{C.R} "
+              f"{C.CYN}{f.context:<12}{C.R} {C.D}{f.category}{C.R}")
+        print(f"      {C.WHT}{f.payload[:120]}{C.R}")
+
+    try:
+        engine = DetectionEngine(config)
+        print(f"\n{C.PUR}{'='*70}{C.R}")
+        print(f"{C.B}{C.WHT}  SCAN START (Advanced Engine){C.R}")
+        print(f"{C.PUR}{'='*70}{C.R}\n")
+        start = time.time()
+        findings = engine.scan(on_finding=on_finding)
+        elapsed = time.time() - start
+
+        print(f"\n{C.PUR}{'='*70}{C.R}")
+        print(f"{C.B}{C.WHT}  COMPLETE{C.R}")
+        print(f"{C.PUR}{'='*70}{C.R}\n")
+        print(f"  {C.NEO}Time:      {C.R}{elapsed:.2f}s")
+        print(f"  {C.NEO}Sent:      {C.R}{engine.stats['sent']}")
+        print(f"  {C.NEO}OK:        {C.R}{C.GRN}{engine.stats['ok']}{C.R}")
+        print(f"  {C.NEO}Errors:    {C.R}{engine.stats['errors']}")
+        print(f"  {C.NEO}Reflected: {C.R}{C.GRN}{engine.stats['reflected']}{C.R}")
+        print(f"  {C.NEO}Confirmed: {C.R}{C.GRN}{engine.stats['confirmed']}{C.R}")
+
+        if findings:
+            print(f"\n{C.GRN}{C.B}[+] {len(findings)} findings{C.R}")
+            by_sev = {}
+            for f in findings:
+                by_sev[f.severity] = by_sev.get(f.severity, 0) + 1
+            for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"):
+                if sev in by_sev:
+                    print(f"  {C.GLD}{sev}{C.R}: {by_sev[sev]}")
+
+            # save
+            print(f"\n{C.GLD}Save report?{C.R} {C.D}(y/n){C.R}: ", end="")
+            if input().strip().lower() == "y":
+                os.makedirs("output", exist_ok=True)
+                ts = int(time.time())
+                jp = f"output/xss_adv_{ts}.json"
+                data_out = {
+                    "url": url,
+                    "method": method_type,
+                    "marker": engine.marker,
+                    "stats": engine.stats,
+                    "findings": [f.to_dict() for f in findings],
+                }
+                with open(jp, "w", encoding="utf-8") as fh:
+                    json.dump(data_out, fh, indent=2, ensure_ascii=False)
+                print(f"  {C.GRN}[+] JSON: {jp}{C.R}")
+        else:
+            print(f"\n{C.YEL}[!] No findings{C.R}")
+    except ValueError as e:
+        print(f"{C.CRM}[!] {e}{C.R}")
+    except Exception as e:
+        print(f"{C.CRM}[!] Error: {e}{C.R}")
+
+    input(f"\n{C.D}Enter...{C.R}")
+
+
 def run():
     while True:
         banner()
@@ -1161,6 +1315,8 @@ def run():
         print(f"{C.PUR}|{C.R}  {C.GLD}2{C.R}  {C.NEO}Scan POST (normal){C.R}                     {C.PUR}|{C.R}")
         print(f"{C.PUR}|{C.R}  {C.GLD}3{C.R}  {C.YEL}Scan GET  (BYPASS){C.R}                     {C.PUR}|{C.R}")
         print(f"{C.PUR}|{C.R}  {C.GLD}4{C.R}  {C.YEL}Scan POST (BYPASS){C.R}                     {C.PUR}|{C.R}")
+        print(f"{C.PUR}|{C.R}  {C.GLD}5{C.R}  {C.GRN}Advanced Engine GET  (xsspor){C.R}           {C.PUR}|{C.R}")
+        print(f"{C.PUR}|{C.R}  {C.GLD}6{C.R}  {C.GRN}Advanced Engine POST (xsspor){C.R}           {C.PUR}|{C.R}")
         print(f"{C.PUR}|{C.R}  {C.GLD}0{C.R}  {C.CRM}Exit{C.R}                                   {C.PUR}|{C.R}")
         print(f"{C.PUR}+{'-'*62}+{C.R}")
         print(f"\n{C.GLD}{C.B}>>{C.R} ", end="")
@@ -1176,6 +1332,10 @@ def run():
             run_scan("GET", adaptive=True)
         elif c == "4":
             run_scan("POST", adaptive=True)
+        elif c == "5":
+            run_advanced_engine("GET")
+        elif c == "6":
+            run_advanced_engine("POST")
         else:
             print(f"{C.CRM}[!] Invalid{C.R}"); time.sleep(1)
 
