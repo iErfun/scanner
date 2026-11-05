@@ -86,9 +86,7 @@ Built for security researchers, red teamers, and ethical hackers who need a fast
 
 ---
 
-## ⚡ Modern Attack Modules (NEW)
-
-Added in `attacks_modern.py` and wired into **Web Scanning Tools**:
+## ⚡ Modern Web Scanning Tools (NEW)
 
 | # | Module | What it probes |
 |---|--------|----------------|
