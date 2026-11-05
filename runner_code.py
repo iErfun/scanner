@@ -7,8 +7,43 @@ import subprocess
 import urllib.request
 import json
 
-BASE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, BASE)
+def _app_root():
+    """Project root in source mode, PyInstaller extract dir when frozen."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return sys._MEIPASS
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+BASE = _app_root()
+if BASE not in sys.path:
+    sys.path.insert(0, BASE)
+# also keep the real exe dir for reports written next to the binary
+EXE_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else BASE
+if EXE_DIR not in sys.path:
+    sys.path.insert(0, EXE_DIR)
+
+# PyInstaller analysis anchors — keep modules in the frozen graph
+try:
+    import core_utils  # noqa: F401
+    import subdomain_enum  # noqa: F401
+    import dns_tools  # noqa: F401
+    import header_audit  # noqa: F401
+    import injection_pack  # noqa: F401
+    import js_secrets  # noqa: F401
+    import port_scan  # noqa: F401
+    import dir_brute  # noqa: F401
+    import tech_detect  # noqa: F401
+    import attacks_modern  # noqa: F401
+    import brute  # noqa: F401
+    import word_list  # noqa: F401
+    import xss  # noqa: F401
+    import email_checker  # noqa: F401
+    import username_finder  # noqa: F401
+    import proxy_tester  # noqa: F401
+    import scan_win  # noqa: F401
+    import scanner  # noqa: F401
+except Exception:
+    pass
 
 
 class Colors:
@@ -443,34 +478,46 @@ def check_internet_connection():
 
 
 def _run_module(name):
-    """Import and run a module's run()/main()/menu entry. Always forces project root on sys.path."""
+    """Import and run a module entry. Works in source and PyInstaller frozen mode."""
     import importlib
     import importlib.util
-    root = BASE
-    if root not in sys.path:
-        sys.path.insert(0, root)
-    # also allow package-style osint.*
+
+    search_roots = []
+    for r in (BASE, EXE_DIR, os.getcwd()):
+        if r and r not in search_roots:
+            search_roots.append(r)
+            if r not in sys.path:
+                sys.path.insert(0, r)
+
+    mod = None
+    last_err = None
     try:
         mod = importlib.import_module(name)
     except Exception as e:
-        # fallback: load from file next to runner
-        fname = name.replace(".", "/") + ".py"
-        fpath = os.path.join(root, fname)
-        if os.path.isfile(fpath):
+        last_err = e
+        # file fallback across frozen extract dir + cwd
+        fname = name.replace(".", os.sep) + ".py"
+        for root in search_roots:
+            fpath = os.path.join(root, fname)
+            if not os.path.isfile(fpath):
+                continue
             try:
                 spec = importlib.util.spec_from_file_location(name, fpath)
                 mod = importlib.util.module_from_spec(spec)
                 sys.modules[name] = mod
                 spec.loader.exec_module(mod)
+                last_err = None
+                break
             except Exception as e2:
-                print(f"{C.CRIMSON}[!] import {name}: {e} / fallback: {e2}{C.R}")
-                pause()
-                return
-        else:
-            print(f"{C.CRIMSON}[!] import {name}: {e}{C.R}")
-            print(f"{C.DIM_GRAY}    expected file: {fpath}{C.R}")
-            pause()
-            return
+                last_err = e2
+
+    if mod is None:
+        print(f"{C.CRIMSON}[!] import {name}: {last_err}{C.R}")
+        for root in search_roots:
+            print(f"{C.DIM_GRAY}    looked in: {os.path.join(root, name.replace('.', os.sep) + '.py')}{C.R}")
+        pause()
+        return
+
     for fn in ("run", "main", "show_modern_menu", "run_full_modern_scan", "main_menu"):
         if hasattr(mod, fn) and callable(getattr(mod, fn)):
             try:

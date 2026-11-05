@@ -129,7 +129,12 @@ def print_finding(kind: str, detail: str, evidence: str = "", severity: str = "m
 
 
 def reports_dir() -> str:
-    d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
+    import sys
+    if getattr(sys, "frozen", False):
+        base = os.path.dirname(sys.executable)
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    d = os.path.join(base, "reports")
     os.makedirs(d, exist_ok=True)
     return d
 
