@@ -763,7 +763,7 @@ def main_menu():
             run_network_discovery()
         elif choice == "0":
             print(WinColors.YELLOW + "[!] Bye" + WinColors.RESET)
-            sys.exit(0)
+            return
         else:
             print(WinColors.RED + "[!] Invalid option" + WinColors.RESET)
             time.sleep(1)

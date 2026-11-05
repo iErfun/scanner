@@ -3126,13 +3126,16 @@ def main():
         box_divider()
         box_line("1) Scan a target", text_color=Colors.SKY_BLUE)
         box_line("2) Monitor network traffic", text_color=Colors.SKY_BLUE)
+        box_line("0) Back / Exit scanner", text_color=Colors.DIM_GRAY)
         box_bottom()
 
         operation = typed_input(Colors.AQUA + "[?] Choose operation (1-2): " + Colors.RESET).strip()
+        if operation == "0":
+            return
         if operation == "2":
             monitor_banner()
             start_network_monitor()
-            sys.exit(0)
+            continue
         if operation != "1":
             print(Colors.RED + "[!] Invalid operation." + Colors.RESET)
             time.sleep(1)
@@ -3244,7 +3247,7 @@ def main():
                 targets.append(line.strip())
             if not targets:
                 print(Colors.RED + "[!] No targets entered!" + Colors.RESET)
-                sys.exit(0)
+                continue
             print(Colors.CYAN + f"[*] {len(targets)} targets loaded!" + Colors.RESET)
 
             print()
@@ -3292,17 +3295,16 @@ def main():
                         box_line(f"  Port {port}: {banner[:40]}", text_color=Colors.DIM_GRAY)
                 box_divider()
             box_bottom()
-            sys.exit(0)
-
+            continue
         if scan_mode == "2":
             target = typed_input(Colors.AQUA + "[#] Enter IP or Hostname: " + Colors.RESET).strip()
             if not target:
                 print(Colors.RED + "[!] No target entered." + Colors.RESET)
-                sys.exit(1)
+                continue
             ip, hostname = resolve_target(target)
             if not is_valid_ip(ip):
                 print(Colors.RED + "[!] Could not resolve target." + Colors.RESET)
-                sys.exit(1)
+                continue
             print(Colors.GREEN + f"[*] IP: {ip}" + Colors.RESET)
             print(Colors.GREEN + f"[*] Hostname: {hostname}" + Colors.RESET)
 
@@ -3340,8 +3342,7 @@ def main():
             scan_type = typed_input(Colors.AQUA + "[?] Choose scan type (1-5): " + Colors.RESET).strip()
             if scan_type not in ["1", "2", "3", "4", "5"]:
                 print(Colors.RED + "[!] Invalid scan type." + Colors.RESET)
-                sys.exit(1)
-
+                continue
             if scan_type == "3" and timeout < 2.0:
                 print(f"{Colors.YELLOW}[!] UDP scan needs longer timeout. "
                       f"Auto-adjusting: {timeout}s -> 2.0s{Colors.RESET}")
@@ -3389,15 +3390,14 @@ def main():
                         raise ValueError
                 except ValueError:
                     print(Colors.RED + "[!] Invalid port list." + Colors.RESET)
-                    sys.exit(1)
+                    continue
             elif mode == "2":
                 ports = sorted(UDP_SERVICES.keys()) if scan_type == "3" else sorted(SERVICES.keys())
             elif mode == "3":
                 ports = list(range(1, 65536))
             else:
                 print(Colors.RED + "[!] Invalid option." + Colors.RESET)
-                sys.exit(1)
-
+                continue
             print("\n" + "=" * 36)
             print(Colors.BLUE + f"\n[*] Scanning {target}..." + Colors.RESET)
             print(Colors.DIM_GRAY + f"[*] Speed: {speed_label} | Timeout: {timeout}s | "
@@ -3522,8 +3522,7 @@ def main():
                 html_filename = save_results_html(target, open_ports, banners, total_time,
                                                   os_type, hostname, scan_type)
                 print(Colors.GREEN + f"[+] HTML saved: {html_filename}" + Colors.RESET)
-            sys.exit(0)
-
+            continue
         if scan_mode == "3":
             network = typed_input(Colors.AQUA + "[?] Enter network (e.g. 192.168.1.0/24): " + Colors.RESET).strip()
             alive_hosts = ping_sweep(network)
@@ -3533,8 +3532,7 @@ def main():
                     print(Colors.GREEN + f"  [+] {ip} (TTL={ttl})" + Colors.RESET)
             else:
                 print(Colors.RED + "[!] No alive hosts found." + Colors.RESET)
-            sys.exit(0)
-
+            continue
         if scan_mode == "4":
             domain = typed_input(Colors.AQUA + "[?] Enter domain: " + Colors.RESET).strip()
             scan_choice = typed_input(
@@ -3547,19 +3545,17 @@ def main():
                         print(Colors.GREEN + f"  [+] {sub} --> {ip}" + Colors.RESET)
                 else:
                     print(Colors.RED + "[!] No subdomains found." + Colors.RESET)
-            sys.exit(0)
-
+            continue
         if scan_mode == "5":
             target = typed_input(Colors.AQUA + "[?] Enter IP or Hostname: " + Colors.RESET).strip()
             os_scan_only(target)
-            sys.exit(0)
-
+            continue
         if scan_mode == "6":
             tor_result = enable_tor()
             if not tor_result["connected"]:
                 print(Colors.RED + "\n[!] Tor is not available." + Colors.RESET)
                 disable_tor()
-                sys.exit(1)
+                continue
             print()
             box_top()
             box_line("SELECT TOR SPEED", text_color=Colors.NEON_CYAN + Colors.BOLD)
@@ -3642,21 +3638,19 @@ def main():
                         f.write(f"  Port {p:<6} {get_service(p):<15} {banners.get(p, '')}\n")
                 print(Colors.GREEN + f"[+] File saved: {filename}" + Colors.RESET)
             disable_tor()
-            sys.exit(0)
-
+            continue
         if scan_mode == "7":
             if not HAS_FAKER:
                 print(Colors.RED + "[!] Faker not installed. Install with: pip install faker" + Colors.RESET)
 
-                sys.exit(1)
-
+                continue
             fl = Faker()
 
             target = typed_input(Colors.AQUA + "[?] Enter IP or Hostname: " + Colors.RESET).strip()
             ip, hostname = resolve_target(target)
             if not is_valid_ip(ip):
                 print(Colors.RED + "[!] Could not resolve target." + Colors.RESET)
-                sys.exit(1)
+                continue
             print(Colors.GREEN + f"[*] IP: {ip}" + Colors.RESET)
 
             print()
@@ -3693,8 +3687,7 @@ def main():
 
             if not fake_ips:
                 print(Colors.RED + "[!] No fake IPs!" + Colors.RESET)
-                sys.exit(0)
-
+                continue
             print()
             box_top()
             box_line("SELECT DECOY SPEED", text_color=Colors.NEON_CYAN + Colors.BOLD)
@@ -3753,8 +3746,11 @@ def main():
                 for p in open_ports:
                     box_line(f"* {p} {get_service(p)}", text_color=Colors.GREEN)
             box_bottom()
-            sys.exit(0)
-
-
+            continue
+            if open_ports:
+                for p in open_ports:
+                    box_line(f"* {p} {get_service(p)}", text_color=Colors.GREEN)
+            box_bottom()
+            continue
 if __name__ == "__main__":
     main()

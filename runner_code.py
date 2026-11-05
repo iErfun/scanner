@@ -522,10 +522,17 @@ def _run_module(name):
         if hasattr(mod, fn) and callable(getattr(mod, fn)):
             try:
                 getattr(mod, fn)()
-            except SystemExit:
-                pass
+            except SystemExit as se:
+                # modules sometimes call sys.exit after a scan — stay in launcher
+                code = getattr(se, "code", None)
+                if code not in (None, 0):
+                    print(f"{C.DIM_GRAY}[module exit code {code}]{C.R}")
             except KeyboardInterrupt:
                 print(f"\n{C.CRIMSON}[!] interrupted{C.R}")
+                try:
+                    pause()
+                except Exception:
+                    pass
             except Exception as e:
                 print(f"{C.CRIMSON}[!] {name}.{fn}: {e}{C.R}")
                 import traceback
