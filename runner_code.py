@@ -133,6 +133,10 @@ def attack_banner():
         ("1", f"{C.NEON_CYAN}Bruteforce{C.R}"),
         ("2", f"{C.CORNFLOWER}Wordlist Generator{C.R}"),
         ("3", f"{C.NEON_PURPLE}XSS Scanner{C.R}"),
+        ("4", f"{C.CRIMSON}Modern Attacks{C.R}  {C.DIM_GRAY}(SSRF/SSTI/Log4j/JWT...){C.R}"),
+        ("5", f"{C.YEL}Injection Pack{C.R}  {C.DIM_GRAY}(CMDi/XXE/CRLF){C.R}"),
+        ("6", f"{C.NEON_LIME}Header / Tech Audit{C.R}"),
+        ("7", f"{C.GOLD}JS Secret Hunter{C.R}"),
         ("0", f"{C.DIM_GRAY}Back{C.R}"),
     ]))
 
@@ -158,6 +162,8 @@ def osint_banner():
         ("2", f"{C.CORNFLOWER}IP Intel{C.R}"),
         ("3", f"{C.NEON_PURPLE}Metadata Extractor{C.R}"),
         ("4", f"{C.YEL}Email Checker{C.R}"),
+        ("5", f"{C.NEON_LIME}Subdomain Enum{C.R}"),
+        ("6", f"{C.GOLD}DNS Tools{C.R}  {C.DIM_GRAY}(AXFR/records){C.R}"),
         ("0", f"{C.DIM_GRAY}Back{C.R}"),
     ]))
 
@@ -225,40 +231,55 @@ def run_osint_module(name):
     _safe(name, _)
 
 
+
 def attack_menu():
     while True:
         attack_banner()
         c = input(f"{C.GOLD}{C.B}>>{C.R} ").strip()
-
         if c == "0":
             return
         elif c == "1":
-            run_bruteforce()
+            _safe("brute", lambda: _run_module("brute"))
         elif c == "2":
-            run_wordlist()
+            _safe("word_list", lambda: _run_module("word_list"))
         elif c == "3":
-            run_xss()
+            _safe("xss", lambda: _run_module("xss"))
+        elif c == "4":
+            _safe("modern", lambda: _run_module("attacks_modern"))
+        elif c == "5":
+            _safe("injection", lambda: _run_module("injection_pack"))
+        elif c == "6":
+            _safe("headers", lambda: _run_module("header_audit"))
+        elif c == "7":
+            _safe("js_secrets", lambda: _run_module("js_secrets"))
         else:
             print(f"{C.CRIMSON}[!] Invalid{C.R}")
             pause()
 
 
+
 def osint_menu():
     MODULES = {
         "1": "username_finder",
-        "2": "ip_intel",
-        "3": "metadata",
-        "4": "email_checker",  # handled specially below
+        "2": "osint.ip_intel",
+        "3": "osint.metadata",
+        "4": "email_checker",
+        "5": "subdomain_enum",
+        "6": "dns_tools",
     }
-
     while True:
         osint_banner()
         c = input(f"{C.GOLD}{C.B}>>{C.R} ").strip()
-
         if c == "0":
             return
         elif c in MODULES:
-            run_osint_module(MODULES[c])
+            name = MODULES[c]
+            if name == "email_checker":
+                _safe("email", lambda: _run_module("email_checker"))
+            elif name.startswith("osint."):
+                _safe(name, lambda n=name: _run_module(n))
+            else:
+                _safe(name, lambda n=name: _run_module(n))
         else:
             print(f"{C.CRIMSON}[!] Invalid{C.R}")
             pause()
@@ -410,6 +431,34 @@ def check_internet_connection():
     print(f"{C.NEON_LIME}{C.B}[+] Internet connection is active.{C.R}")
     print(f"{C.TEAL}Press Enter to continue to main menu...{C.R}", end="")
     input()
+
+
+def _run_module(name):
+    """Import and run a top-level module's run() or main()."""
+    import importlib
+    try:
+        mod = importlib.import_module(name)
+    except Exception as e:
+        print(f"{C.CRIMSON}[!] import {name}: {e}{C.R}")
+        pause()
+        return
+    for fn in ("run", "main", "show_modern_menu", "run_full_modern_scan"):
+        if hasattr(mod, fn):
+            try:
+                getattr(mod, fn)()
+            except SystemExit:
+                pass
+            except KeyboardInterrupt:
+                print(f"\n{C.CRIMSON}[!] interrupted{C.R}")
+            except Exception as e:
+                print(f"{C.CRIMSON}[!] {name}.{fn}: {e}{C.R}")
+                import traceback
+                traceback.print_exc()
+                pause()
+            return
+    print(f"{C.CRIMSON}[!] no entrypoint in {name}{C.R}")
+    pause()
+
 
 def main():
     while True:
