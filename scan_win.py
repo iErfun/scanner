@@ -13,11 +13,15 @@ try:
 except (AttributeError, ValueError):
     pass
 
-from scapy.all import IP, TCP, ICMP, ARP, Ether, sr1, srp, RandShort
+try:
+    from scapy.all import IP, TCP, ICMP, ARP, Ether, sr1, srp, RandShort
+    HAS_SCAPY = True
+except ImportError:
+    HAS_SCAPY = False
+    IP = TCP = ICMP = ARP = Ether = sr1 = srp = RandShort = None
 
 try:
     from impacket.smbconnection import SMBConnection
-
     HAS_IMPACKET = True
 except ImportError:
     HAS_IMPACKET = False
@@ -725,6 +729,11 @@ def run_batch_scan():
 
 
 def main_menu():
+    if not HAS_SCAPY:
+        print(f"{WinColors.RED}[!] scapy is required for Windows/SMB scanner{WinColors.RESET}")
+        print(f"{WinColors.DIM_GRAY}    pip install scapy{WinColors.RESET}")
+        input(f"{WinColors.DIM_GRAY}\n[Press Enter to continue] {WinColors.RESET}")
+        return
     while True:
         print_banner()
         print(
