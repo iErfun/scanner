@@ -35,6 +35,7 @@ try:
     import dns_tools  # noqa: F401
     import header_audit  # noqa: F401
     import injection_pack  # noqa: F401
+    import sqli_engine  # noqa: F401
     import js_secrets  # noqa: F401
     import port_scan  # noqa: F401
     import dir_brute  # noqa: F401
@@ -175,11 +176,12 @@ def attack_banner():
         ("2", f"{C.CORNFLOWER}Wordlist Generator{C.R}"),
         ("3", f"{C.NEON_PURPLE}XSS Scanner{C.R}"),
         ("4", f"{C.CRIMSON}Modern Attacks{C.R}  {C.DIM_GRAY}(SSRF/SSTI/Log4j/JWT...){C.R}"),
-        ("5", f"{C.YEL}Injection Pack{C.R}  {C.DIM_GRAY}(CMDi/XXE/CRLF){C.R}"),
-        ("6", f"{C.NEON_LIME}Header / Tech Audit{C.R}"),
-        ("7", f"{C.GOLD}JS Secret Hunter{C.R}"),
-        ("8", f"{C.CORNFLOWER}Dir Brute{C.R}"),
-        ("9", f"{C.NEON_PURPLE}Tech Detect{C.R}"),
+        ("5", f"{C.NEON_LIME}SQLi Engine{C.R}  {C.DIM_GRAY}(detect/extract/dump){C.R}"),
+        ("6", f"{C.YEL}Injection Pack{C.R}  {C.DIM_GRAY}(CMDi/XXE/CRLF){C.R}"),
+        ("7", f"{C.NEON_LIME}Header / Tech Audit{C.R}"),
+        ("8", f"{C.GOLD}JS Secret Hunter{C.R}"),
+        ("9", f"{C.CORNFLOWER}Dir Brute{C.R}"),
+        ("10", f"{C.NEON_PURPLE}Tech Detect{C.R}"),
         ("0", f"{C.DIM_GRAY}Back{C.R}"),
     ]))
 
@@ -288,14 +290,16 @@ def attack_menu():
         elif c == "4":
             _safe("modern", lambda: _run_module("attacks_modern"))
         elif c == "5":
-            _safe("injection", lambda: _run_module("injection_pack"))
+            _safe("sqli", lambda: _run_module("sqli_engine"))
         elif c == "6":
-            _safe("headers", lambda: _run_module("header_audit"))
+            _safe("injection", lambda: _run_module("injection_pack"))
         elif c == "7":
-            _safe("js_secrets", lambda: _run_module("js_secrets"))
+            _safe("headers", lambda: _run_module("header_audit"))
         elif c == "8":
-            _safe("dir_brute", lambda: _run_module("dir_brute"))
+            _safe("js_secrets", lambda: _run_module("js_secrets"))
         elif c == "9":
+            _safe("dir_brute", lambda: _run_module("dir_brute"))
+        elif c == "10":
             _safe("tech_detect", lambda: _run_module("tech_detect"))
         else:
             print(f"{C.CRIMSON}[!] Invalid{C.R}")
