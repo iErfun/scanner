@@ -2543,7 +2543,7 @@ def get_lfi_payloads(mode="normal"):
 
 def run_xss_scanner():
     os.system("clear" if os.name == "posix" else "cls")
-    print(f"""{Colors.CRIMSON}{Colors.BOLD}
+    print(fr"""{Colors.CRIMSON}{Colors.BOLD}
 
 
  /$$   /$$  /$$$$$$$ /$$$$$$$        /$$$$$$$  /$$$$$$$  /$$$$$$  /$$$$$$$ 
@@ -2749,7 +2749,7 @@ def run_xss_scanner():
 
 def run_sqli_scanner():
     os.system("clear" if os.name == "posix" else "cls")
-    print(f"""{Colors.CRIMSON}{Colors.BOLD}
+    print(fr"""{Colors.CRIMSON}{Colors.BOLD}
                         $$\                                              
                     $$ |                                             
  $$$$$$$\  $$$$$$\  $$ |       $$$$$$$\  $$$$$$$\ $$$$$$\  $$$$$$$\  
@@ -2897,7 +2897,7 @@ def scan_lfi_url(url, payloads, proxies=None, timeout=8, delay=0.2):
 
 def run_lfi_scanner():
     os.system("clear" if os.name == "posix" else "cls")
-    print(f"""{Colors.CRIMSON}{Colors.BOLD}
+    print(fr"""{Colors.CRIMSON}{Colors.BOLD}
     $$\  $$$$$$\  $$\                                              
 $$ |$$  __$$\ \__|                                             
 $$ |$$ /  \__|$$\        $$$$$$$\  $$$$$$$\ $$$$$$\  $$$$$$$\  
