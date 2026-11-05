@@ -19,7 +19,7 @@ except ImportError:
 import ssl
 import requests
 
-import proxy_tester
+# proxy_tester loaded via optional import below as px
 
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 logger = logging.getLogger("scanner")
@@ -31,9 +31,15 @@ except (AttributeError, ValueError):
 
 print = functools.partial(print, flush=True)
 
-from scapy.all import IP, TCP, UDP, ICMP, Raw, sr1, sr, sniff, fragment
-from scapy.layers.http import HTTPRequest
-from scapy.layers.dns import DNS
+try:
+    from scapy.all import IP, TCP, UDP, ICMP, Raw, sr1, sr, sniff, fragment
+    from scapy.layers.http import HTTPRequest
+    from scapy.layers.dns import DNS
+    HAS_SCAPY = True
+except ImportError:
+    HAS_SCAPY = False
+    IP = TCP = UDP = ICMP = Raw = sr1 = sr = sniff = fragment = None
+    HTTPRequest = DNS = None
 
 try:
     from faker import Faker
@@ -50,7 +56,7 @@ except Exception as e:
     HAS_WINSCAN = False
     WINSCAN_ERROR = str(e)
 try:
-    from scu import main as email_scanner_main
+    from email_checker import main as email_scanner_main
 
     HAS_EMAILSCAN = True
 except Exception as e:
@@ -58,7 +64,7 @@ except Exception as e:
     EMAILSCAN_ERROR = str(e)
 
 try:
-    import px
+    import proxy_tester as px
 
     HAS_PROXYTEST = True
 except Exception as e:
@@ -3094,6 +3100,9 @@ def main():
         filename="scanner_debug.log",
         format="%(asctime)s [%(levelname)s] %(message)s"
     )
+    if not HAS_SCAPY:
+        print(f"{Colors.YELLOW}[!] scapy not installed — advanced packet features disabled{Colors.RESET}")
+        print(f"{Colors.DIM_GRAY}    Install: pip install scapy{Colors.RESET}\n")
     while True:
         os.system("clear" if os.name == "posix" else "cls")
         print(Colors.CRIMSON + """
@@ -3185,7 +3194,7 @@ def main():
                     traceback.print_exc()
                     input(Colors.DIM_GRAY + "\n[Press Enter to continue] " + Colors.RESET)
             else:
-                print(f"{Colors.RED}[!] scu.py not found or has errors{Colors.RESET}")
+                print(f"{Colors.RED}[!] email_checker.py not found or has errors{Colors.RESET}")
                 print(f"{Colors.DIM_GRAY}Error: {EMAILSCAN_ERROR}{Colors.RESET}")
                 input(Colors.DIM_GRAY + "\n[Press Enter to continue] " + Colors.RESET)
             continue
