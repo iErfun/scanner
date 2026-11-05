@@ -246,8 +246,8 @@ def _require_xsspor(feature="xsspor"):
         print(f"{C.YEL}    ChainAdvanced/hash_password is None (package not bundled or cryptography missing){C.R}")
     print(f"{C.D}    Fix:")
     print(f"    1) Run from folder that contains xss.py AND xsspor/")
-    print(f"    2) pip install cryptography PySocks requests")
-    print(f"    3) Rebuild exe with xsspor/ included{C.R}")
+    print(f"    2) pip install cryptography PySocks requests  (or: pip install -r requirements.txt)")
+    print(f"    3) Rebuild exe with --include-package=xsspor and cryptography in Nuitka{C.R}")
     return False
 
 
