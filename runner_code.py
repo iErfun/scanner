@@ -28,6 +28,8 @@ class Colors:
     GOLD = '\033[38;2;255;215;0m'
     NEON_LIME = '\033[38;2;180;255;0m'
     TEAL = '\033[38;2;0;128;128m'
+    NEON_RED = '\033[38;2;255;50;50m'
+    NEON_ORANGE = '\033[38;2;255;140;0m'
 
 
 C = Colors
@@ -155,10 +157,7 @@ def osint_banner():
         ("1", f"{C.NEON_CYAN}Username Finder{C.R}"),
         ("2", f"{C.CORNFLOWER}IP Intel{C.R}"),
         ("3", f"{C.NEON_PURPLE}Metadata Extractor{C.R}"),
-        ("4", f"{C.YEL}Google Dork{C.R}"),
-        ("5", f"{C.NEON_CYAN}Domain Intel{C.R}"),
-        ("6", f"{C.CORNFLOWER}Email Intel{C.R}"),
-        ("7", f"{C.NEON_PURPLE}Web Crawler{C.R}"),
+        ("4", f"{C.YEL}Email Checker{C.R}"),
         ("0", f"{C.DIM_GRAY}Back{C.R}"),
     ]))
 
@@ -209,13 +208,19 @@ def run_xss():
 def run_osint_module(name):
     def _():
         import importlib
-        mod = importlib.import_module(f"osint.{name}")
+        # email_checker lives at project root; others under osint/
+        if name == "email_checker":
+            mod = importlib.import_module("email_checker")
+        else:
+            mod = importlib.import_module(f"osint.{name}")
         if hasattr(mod, "run"):
             mod.run()
         elif hasattr(mod, "main"):
             mod.main()
+        elif hasattr(mod, "main_menu"):
+            mod.main_menu()
         else:
-            print(f"{C.CRIMSON}[!] No run() or main() in osint.{name}{C.R}")
+            print(f"{C.CRIMSON}[!] No run()/main()/main_menu() in {name}{C.R}")
             pause()
     _safe(name, _)
 
@@ -243,10 +248,7 @@ def osint_menu():
         "1": "username_finder",
         "2": "ip_intel",
         "3": "metadata",
-        "4": "dork",
-        "5": "domain",
-        "6": "email",
-        "7": "crawler",
+        "4": "email_checker",  # handled specially below
     }
 
     while True:
