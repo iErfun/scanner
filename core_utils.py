@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Shared helpers for XOMLSX modules — session, colors, report, safe I/O."""
+"""Shared helpers — session, colors, report, safe I/O."""
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
+import socket
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -15,7 +17,7 @@ try:
     from requests.packages.urllib3.exceptions import InsecureRequestWarning
     requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 except ImportError:
-    requests = None
+    requests = None  # type: ignore
 
 
 class C:
@@ -33,21 +35,22 @@ class C:
     GRAY = "\033[38;2;110;110;120m"
     AQUA = "\033[38;2;0;255;213m"
     CRIM = "\033[38;2;220;20;60m"
+    LIME = "\033[38;2;180;255;0m"
 
 
 UA_POOL = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
 ]
 
 
-def session(proxies: Optional[dict] = None, timeout: float = 8.0) -> "requests.Session":
-    if not requests:
-        raise RuntimeError("requests is required")
+def session(timeout: float = 12.0, proxies: Optional[Dict[str, str]] = None, verify: bool = False):
+    if requests is None:
+        raise RuntimeError("requests required: pip install requests")
     s = requests.Session()
-    s.verify = False
+    s.verify = verify
     s.headers.update({
         "User-Agent": random.choice(UA_POOL),
         "Accept": "*/*",
@@ -63,7 +66,7 @@ def session(proxies: Optional[dict] = None, timeout: float = 8.0) -> "requests.S
 def get(s, url, **kw):
     try:
         return s.get(url, allow_redirects=kw.pop("allow_redirects", False),
-                     timeout=kw.pop("timeout", 8), **kw)
+                     timeout=kw.pop("timeout", getattr(s, "timeout", 8)), **kw)
     except Exception:
         return None
 
@@ -71,7 +74,7 @@ def get(s, url, **kw):
 def post(s, url, **kw):
     try:
         return s.post(url, allow_redirects=kw.pop("allow_redirects", False),
-                      timeout=kw.pop("timeout", 8), **kw)
+                      timeout=kw.pop("timeout", getattr(s, "timeout", 8)), **kw)
     except Exception:
         return None
 
@@ -93,10 +96,18 @@ def root_of(url: str) -> str:
 
 
 def normalize_url(url: str) -> str:
-    url = url.strip()
+    url = (url or "").strip()
+    if not url:
+        return ""
     if not url.startswith(("http://", "https://")):
         url = "http://" + url
     return url
+
+
+def strip_scheme(host: str) -> str:
+    host = (host or "").strip().lower()
+    host = host.replace("https://", "").replace("http://", "")
+    return host.split("/")[0].split(":")[0]
 
 
 def finding(kind: str, detail: str, evidence: str = "", severity: str = "info") -> dict:
@@ -109,7 +120,7 @@ def finding(kind: str, detail: str, evidence: str = "", severity: str = "info") 
     }
 
 
-def print_finding(kind: str, detail: str, evidence: str = "", severity: str = "med"):
+def print_finding(kind: str, detail: str, evidence: str = "", severity: str = "med") -> None:
     color = C.RED if severity in ("high", "critical") else C.YEL if severity == "med" else C.CYN
     print(f"{color}{C.B}[!] {kind}{C.R}")
     print(f"    {C.YEL}{detail}{C.R}")
@@ -117,15 +128,21 @@ def print_finding(kind: str, detail: str, evidence: str = "", severity: str = "m
         print(f"    {C.GRAY}{evidence[:160].replace(chr(10), ' ')}{C.R}")
 
 
+def reports_dir() -> str:
+    d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 def save_json_report(name: str, data: Any) -> str:
-    path = f"{name}_{int(time.time())}.json"
+    path = os.path.join(reports_dir(), f"{name}_{int(time.time())}.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False, default=str)
     return path
 
 
 def save_text_report(name: str, title: str, lines: List[str]) -> str:
-    path = f"{name}_{int(time.time())}.txt"
+    path = os.path.join(reports_dir(), f"{name}_{int(time.time())}.txt")
     with open(path, "w", encoding="utf-8") as f:
         f.write(f"{'=' * 60}\n  {title}\n{'=' * 60}\n\n")
         for line in lines:
@@ -133,5 +150,27 @@ def save_text_report(name: str, title: str, lines: List[str]) -> str:
     return path
 
 
-def pause():
-    input(f"\n{C.GRAY}[Press Enter]{C.R}")
+def pause() -> None:
+    try:
+        input(f"\n{C.GRAY}[Press Enter]{C.R}")
+    except EOFError:
+        pass
+
+
+def resolve_host(host: str) -> List[str]:
+    ips: List[str] = []
+    try:
+        for info in socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM):
+            ip = info[4][0]
+            if ip not in ips:
+                ips.append(ip)
+    except Exception:
+        pass
+    return ips
+
+
+def safe_int(val: str, default: int) -> int:
+    try:
+        return int(str(val).strip())
+    except Exception:
+        return default

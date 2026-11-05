@@ -137,6 +137,9 @@ def attack_banner():
         ("5", f"{C.YEL}Injection Pack{C.R}  {C.DIM_GRAY}(CMDi/XXE/CRLF){C.R}"),
         ("6", f"{C.NEON_LIME}Header / Tech Audit{C.R}"),
         ("7", f"{C.GOLD}JS Secret Hunter{C.R}"),
+        ("8", f"{C.NEON_CYAN}Port Scanner{C.R}"),
+        ("9", f"{C.CORNFLOWER}Dir Brute{C.R}"),
+        ("10", f"{C.NEON_PURPLE}Tech Detect{C.R}"),
         ("0", f"{C.DIM_GRAY}Back{C.R}"),
     ]))
 
@@ -252,6 +255,12 @@ def attack_menu():
             _safe("headers", lambda: _run_module("header_audit"))
         elif c == "7":
             _safe("js_secrets", lambda: _run_module("js_secrets"))
+        elif c == "8":
+            _safe("port_scan", lambda: _run_module("port_scan"))
+        elif c == "9":
+            _safe("dir_brute", lambda: _run_module("dir_brute"))
+        elif c == "10":
+            _safe("tech_detect", lambda: _run_module("tech_detect"))
         else:
             print(f"{C.CRIMSON}[!] Invalid{C.R}")
             pause()
@@ -434,16 +443,36 @@ def check_internet_connection():
 
 
 def _run_module(name):
-    """Import and run a top-level module's run() or main()."""
+    """Import and run a module's run()/main()/menu entry. Always forces project root on sys.path."""
     import importlib
+    import importlib.util
+    root = BASE
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    # also allow package-style osint.*
     try:
         mod = importlib.import_module(name)
     except Exception as e:
-        print(f"{C.CRIMSON}[!] import {name}: {e}{C.R}")
-        pause()
-        return
-    for fn in ("run", "main", "show_modern_menu", "run_full_modern_scan"):
-        if hasattr(mod, fn):
+        # fallback: load from file next to runner
+        fname = name.replace(".", "/") + ".py"
+        fpath = os.path.join(root, fname)
+        if os.path.isfile(fpath):
+            try:
+                spec = importlib.util.spec_from_file_location(name, fpath)
+                mod = importlib.util.module_from_spec(spec)
+                sys.modules[name] = mod
+                spec.loader.exec_module(mod)
+            except Exception as e2:
+                print(f"{C.CRIMSON}[!] import {name}: {e} / fallback: {e2}{C.R}")
+                pause()
+                return
+        else:
+            print(f"{C.CRIMSON}[!] import {name}: {e}{C.R}")
+            print(f"{C.DIM_GRAY}    expected file: {fpath}{C.R}")
+            pause()
+            return
+    for fn in ("run", "main", "show_modern_menu", "run_full_modern_scan", "main_menu"):
+        if hasattr(mod, fn) and callable(getattr(mod, fn)):
             try:
                 getattr(mod, fn)()
             except SystemExit:

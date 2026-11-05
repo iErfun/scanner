@@ -1,94 +1,81 @@
 #!/usr/bin/env python3
-"""HTTP security header audit + tech hints from response headers/body."""
+"""HTTP security header audit + tech fingerprint hints."""
 from __future__ import annotations
 
 from typing import Dict, List, Tuple
 
 from core_utils import C, get, normalize_url, pause, print_finding, save_json_report, session
 
-# header -> (required?, severity if missing, note)
-CHECKS = [
-    ("Strict-Transport-Security", True, "high", "Missing HSTS"),
-    ("Content-Security-Policy", True, "med", "Missing CSP"),
-    ("X-Content-Type-Options", True, "med", "Missing nosniff"),
-    ("X-Frame-Options", True, "med", "Clickjacking risk"),
-    ("Referrer-Policy", False, "low", "Missing Referrer-Policy"),
-    ("Permissions-Policy", False, "low", "Missing Permissions-Policy"),
-    ("Cross-Origin-Opener-Policy", False, "low", "Missing COOP"),
-    ("Cross-Origin-Resource-Policy", False, "low", "Missing CORP"),
-]
+SECURITY_HEADERS = {
+    "Strict-Transport-Security": ("high", "Missing HSTS"),
+    "Content-Security-Policy": ("high", "Missing CSP"),
+    "X-Content-Type-Options": ("med", "Missing X-Content-Type-Options"),
+    "X-Frame-Options": ("med", "Missing X-Frame-Options / clickjacking risk"),
+    "Referrer-Policy": ("low", "Missing Referrer-Policy"),
+    "Permissions-Policy": ("low", "Missing Permissions-Policy"),
+    "X-XSS-Protection": ("info", "Legacy X-XSS-Protection absent (ok on modern browsers)"),
+    "Cross-Origin-Opener-Policy": ("low", "Missing COOP"),
+    "Cross-Origin-Resource-Policy": ("low", "Missing CORP"),
+}
 
-BAD_SERVER_LEAK = ("X-Powered-By", "Server", "X-AspNet-Version", "X-AspNetMvc-Version")
-
-TECH_SIGS = [
-    ("wp-content", "WordPress"),
-    ("Drupal.settings", "Drupal"),
-    ("__NEXT_DATA__", "Next.js"),
-    ("ng-version", "Angular"),
-    ("react", "React (hint)"),
-    ("laravel_session", "Laravel"),
-    ("cf-ray", "Cloudflare"),
-    ("x-amz-request-id", "AWS"),
-    ("x-vercel-id", "Vercel"),
-    ("x-github-request-id", "GitHub"),
+LEAK_HEADERS = [
+    "Server", "X-Powered-By", "X-AspNet-Version", "X-AspNetMvc-Version",
+    "X-Generator", "X-Drupal-Cache", "X-Varnish", "Via", "X-Backend-Server",
 ]
 
 
-def audit(url: str) -> Dict:
-    s = session()
-    url = normalize_url(url)
-    r = get(s, url, allow_redirects=True, timeout=10)
-    findings: List[dict] = []
+def audit(url: str) -> dict:
+    s = session(timeout=12)
+    r = get(s, url, allow_redirects=True, timeout=12)
     if not r:
-        print(f"{C.RED}[!] no response{C.R}")
-        return {"url": url, "findings": findings}
-    headers = {k.lower(): v for k, v in r.headers.items()}
-    print(f"{C.GOLD}[*] {url}  status={r.status_code}{C.R}\n")
-
-    for name, required, sev, note in CHECKS:
-        if name.lower() not in headers:
-            findings.append({"type": "missing-header", "header": name, "severity": sev, "note": note})
-            print_finding("Missing Header", f"{name} — {note}", severity=sev)
+        return {"error": "no response", "url": url}
+    headers = {k: v for k, v in r.headers.items()}
+    missing = []
+    present = []
+    for h, (sev, msg) in SECURITY_HEADERS.items():
+        if h.lower() not in {k.lower() for k in headers}:
+            missing.append({"header": h, "severity": sev, "detail": msg})
         else:
-            print(f"  {C.GREEN}[+]{C.R} {name}: {headers[name.lower()][:80]}")
-
-    for name in BAD_SERVER_LEAK:
-        if name.lower() in headers:
-            findings.append({"type": "info-leak", "header": name, "value": headers[name.lower()], "severity": "low"})
-            print_finding("Info Leak", f"{name}: {headers[name.lower()]}", severity="low")
-
-    body = r.text or ""
-    techs = []
-    for sig, name in TECH_SIGS:
-        if sig.lower() in body.lower() or sig.lower() in str(headers):
-            techs.append(name)
-    techs = sorted(set(techs))
-    if techs:
-        print(f"\n{C.NEON}[*] Tech hints: {', '.join(techs)}{C.R}")
-        findings.append({"type": "tech", "techs": techs, "severity": "info"})
-
-    cookies = r.headers.get("Set-Cookie", "")
-    if cookies:
-        low = cookies.lower()
-        if "httponly" not in low:
-            print_finding("Cookie", "Set-Cookie without HttpOnly", severity="med")
-            findings.append({"type": "cookie", "issue": "missing HttpOnly", "severity": "med"})
-        if "secure" not in low and url.startswith("https"):
-            print_finding("Cookie", "Set-Cookie without Secure on HTTPS", severity="med")
-            findings.append({"type": "cookie", "issue": "missing Secure", "severity": "med"})
-
-    return {"url": url, "status": r.status_code, "findings": findings, "techs": techs}
+            # case-insensitive fetch
+            val = next(v for k, v in headers.items() if k.lower() == h.lower())
+            present.append({"header": h, "value": val})
+    leaks = []
+    for h in LEAK_HEADERS:
+        for k, v in headers.items():
+            if k.lower() == h.lower():
+                leaks.append({"header": k, "value": v})
+    return {
+        "url": url,
+        "final_url": str(r.url),
+        "status": r.status_code,
+        "missing": missing,
+        "present": present,
+        "leaks": leaks,
+        "all_headers": headers,
+    }
 
 
-def run():
-    print(f"\n{C.PURP}{C.B}  Header / Tech Audit{C.R}\n")
-    url = input(f"{C.AQUA}[?] URL: {C.R}").strip()
+def run(url: str = None):
+    print(f"\n{C.PURP}{C.B}  Header Security Audit{C.R}\n")
+    url = normalize_url(url or input(f"{C.AQUA}[?] URL: {C.R}"))
     if not url:
+        pause()
         return
-    result = audit(url)
-    if result["findings"]:
-        path = save_json_report("header_audit", result)
-        print(f"\n{C.GREEN}[+] Saved: {path}{C.R}")
+    print(f"{C.GOLD}[*] Fetching {url} ...{C.R}")
+    data = audit(url)
+    if data.get("error"):
+        print(f"{C.RED}[!] {data['error']}{C.R}")
+        pause()
+        return
+    print(f"{C.NEON}[+] Status {data['status']} → {data['final_url']}{C.R}")
+    for m in data["missing"]:
+        print_finding("Missing Header", m["detail"], m["header"], m["severity"])
+    for L in data["leaks"]:
+        print_finding("Info Leak", L["header"], L["value"], "med")
+    for p in data["present"]:
+        print(f"  {C.GREEN}[ok]{C.R} {p['header']}: {C.GRAY}{p['value'][:80]}{C.R}")
+    path = save_json_report("header_audit", data)
+    print(f"{C.GREEN}[+] Saved: {path}{C.R}")
     pause()
 
 
