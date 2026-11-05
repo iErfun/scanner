@@ -106,27 +106,29 @@ def _safe_filename(name):
 
 
 class Colors:
-    GREEN = '\033[92m'
-    RED = '\033[91m'
-    YELLOW = '\033[93m'
-    BLUE = '\033[94m'
-    CYAN = '\033[96m'
-    MAGENTA = '\033[95m'
-    WHITE = '\033[97m'
-    BOLD = '\033[1m'
-    RESET = '\033[0m'
-    ORANGE = '\033[38;2;255;165;0m'
-    DIM_GRAY = '\033[38;2;110;110;120m'
-    NEON_CYAN = '\033[38;2;0;255;213m'
-    NEON_PURPLE = '\033[38;2;191;64;255m'
-    CORNFLOWER_BLUE = '\033[38;2;100;149;237m'
-    SKY_BLUE = '\033[38;2;135;206;235m'
-    FRAME = '\033[38;2;138;92;246m'
-    CRIMSON = '\033[38;2;220;20;60m'
-    AQUA = '\033[38;2;0;255;255m'
-    TEAL = '\033[38;2;0;128;128m'
-    GOLD = '\033[38;2;255;215;0m'
-    DIM = '\033[2m'
+    GREEN = "[92m"
+    RED = "[91m"
+    YELLOW = "[93m"
+    BLUE = "[94m"
+    CYAN = "[96m"
+    MAGENTA = "[95m"
+    WHITE = "[97m"
+    BOLD = "[1m"
+    RESET = "[0m"
+    ORANGE = "[38;2;251;146;60m"
+    DIM_GRAY = "[38;2;100;105;120m"
+    NEON_CYAN = "[38;2;0;255;200m"
+    NEON_PURPLE = "[38;2;168;85;247m"
+    CORNFLOWER_BLUE = "[38;2;96;165;250m"
+    SKY_BLUE = "[38;2;125;211;252m"
+    FRAME = "[38;2;139;92;246m"
+    CRIMSON = "[38;2;248;113;113m"
+    AQUA = "[38;2;34;211;238m"
+    TEAL = "[38;2;45;212;191m"
+    GOLD = "[38;2;255;200;60m"
+    LIME = "[38;2;163;230;53m"
+    PINK = "[38;2;244;114;182m"
+    DIM = "[2m"
 
 
 SERVICES = {
@@ -3083,15 +3085,15 @@ def show_web_menu():
  ╚══╝╚══╝   ╚══════╝ ╚═════╝    ╚══════╝  ╚═════╝╚═╝  ╚═╝ ╚═╝  ╚═══╝
         {Colors.RESET}""")
         box_top()
-        box_line("SELECT WEB TOOL", text_color=Colors.NEON_CYAN + Colors.BOLD)
+        box_line("WEB SCANNING TOOLS", text_color=Colors.NEON_CYAN + Colors.BOLD)
         box_divider()
-        box_line("1) Directory Buster", text_color=Colors.GREEN + Colors.BOLD)
-        box_line("2) SQL Injection Scanner", text_color=Colors.GREEN + Colors.BOLD)
-        box_line("3) XSS Scanner", text_color=Colors.GREEN + Colors.BOLD)
-        box_line("4) LFI Scanner", text_color=Colors.GREEN + Colors.BOLD)
-        box_line("5) Modern Attack Modules   [SSRF/SSTI/Log4j/JWT/...]", text_color=Colors.NEON_PURPLE + Colors.BOLD)
-        box_line("6) Full Modern Web Scan", text_color=Colors.NEON_CYAN + Colors.BOLD)
-        box_line("7) Back to Main Menu", text_color=Colors.SKY_BLUE)
+        box_line("1) Directory Buster", text_color=Colors.SKY_BLUE)
+        box_line("2) SQL Injection Scanner", text_color=Colors.SKY_BLUE)
+        box_line("3) XSS Scanner", text_color=Colors.SKY_BLUE)
+        box_line("4) LFI Scanner", text_color=Colors.SKY_BLUE)
+        box_line("5) Modern Modules  ·  SSRF SSTI Log4j JWT CORS …", text_color=Colors.NEON_PURPLE + Colors.BOLD)
+        box_line("6) Full Modern Scan  ·  live progress all stages", text_color=Colors.NEON_CYAN + Colors.BOLD)
+        box_line("7) Back", text_color=Colors.DIM_GRAY)
         box_bottom()
 
         choice = typed_input(Colors.AQUA + "[?] Choose (1-7): " + Colors.RESET).strip()

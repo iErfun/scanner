@@ -15,6 +15,8 @@ import re
 import socket
 import string
 import time
+import os
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, quote, urlencode, urljoin, urlparse, urlunparse
@@ -29,20 +31,25 @@ except ImportError:
 
 # ── colours (match scanner.py) ──────────────────────────────────────────────
 class C:
-    R = "\033[0m"
-    B = "\033[1m"
-    DIM = "\033[2m"
-    RED = "\033[91m"
-    GREEN = "\033[92m"
-    YEL = "\033[93m"
-    CYN = "\033[96m"
-    WHT = "\033[97m"
-    GOLD = "\033[38;2;255;215;0m"
-    NEON = "\033[38;2;0;255;213m"
-    PURP = "\033[38;2;191;64;255m"
-    GRAY = "\033[38;2;110;110;120m"
-    AQUA = "\033[38;2;0;255;213m"
-    CRIM = "\033[38;2;220;20;60m"
+    R = "[0m"
+    B = "[1m"
+    DIM = "[2m"
+    RED = "[91m"
+    GREEN = "[92m"
+    YEL = "[93m"
+    CYN = "[96m"
+    WHT = "[97m"
+    GOLD = "[38;2;255;200;60m"
+    NEON = "[38;2;0;255;200m"
+    PURP = "[38;2;168;85;247m"
+    GRAY = "[38;2;100;105;120m"
+    AQUA = "[38;2;34;211;238m"
+    CRIM = "[38;2;248;113;113m"
+    LIME = "[38;2;163;230;53m"
+    PINK = "[38;2;244;114;182m"
+    BLUE = "[38;2;96;165;250m"
+    FRAME = "[38;2;139;92;246m"
+
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -100,6 +107,62 @@ def _print_finding(kind: str, detail: str, evidence: str = ""):
         print(f"    {C.GRAY}Evidence: {ev}{C.R}")
 
 
+# ── live progress (no freeze — always paint the terminal) ────────────────────
+class Progress:
+    """Single-line live bar for long probe loops."""
+
+    def __init__(self, total: int, label: str = ""):
+        self.total = max(int(total), 1)
+        self.n = 0
+        self.hits = 0
+        self.label = label
+        self.t0 = time.time()
+
+    def tick(self, hit: bool = False, detail: str = "") -> None:
+        self.n += 1
+        if hit:
+            self.hits += 1
+        if detail:
+            self.label = detail
+        self._render()
+
+    def _render(self) -> None:
+        pct = min(self.n / self.total, 1.0)
+        w = 26
+        filled = int(w * pct)
+        bar = "█" * filled + "░" * (w - filled)
+        elapsed = time.time() - self.t0
+        left = self.total - self.n
+        eta = (elapsed / self.n * left) if self.n else 0.0
+        line = (
+            f"\r  {C.FRAME}│{C.R} {C.NEON}{bar}{C.R} {C.B}{pct*100:5.1f}%{C.R}"
+            f"  {C.GRAY}{self.n}/{self.total}{C.R}"
+            f"  {C.LIME}hits={self.hits}{C.R}"
+            f"  {C.GRAY}{elapsed:4.0f}s ETA {eta:4.0f}s{C.R}"
+            f"  {C.DIM}{self.label[:28]:<28}{C.R}"
+        )
+        sys.stdout.write(line)
+        sys.stdout.flush()
+
+    def done(self, msg: str = "") -> None:
+        sys.stdout.write("\r" + " " * 110 + "\r")
+        if msg:
+            print(f"  {C.GREEN}[✓]{C.R} {msg}")
+        else:
+            elapsed = time.time() - self.t0
+            print(
+                f"  {C.GREEN}[✓]{C.R} {C.B}{self.label or 'done'}{C.R}"
+                f"  {C.GRAY}{self.n} req · {self.hits} hits · {elapsed:.1f}s{C.R}"
+            )
+        sys.stdout.flush()
+
+
+def stage(title: str, idx: int, total: int) -> None:
+    print(f"\n  {C.FRAME}{C.B}[{idx}/{total}]{C.R} {C.AQUA}{C.B}{title}{C.R}")
+
+
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. SSRF + Cloud Metadata
 # ══════════════════════════════════════════════════════════════════════════════
@@ -142,7 +205,7 @@ SSRF_SIGNATURES = [
 ]
 
 
-def probe_ssrf(url: str, proxies=None, timeout=6.0, delay=0.15) -> List[dict]:
+def probe_ssrf(url: str, proxies=None, timeout: float = 6.0, delay: float = 0.15) -> List[dict]:
     """Inject SSRF payloads into every query param; also try common SSRF param names."""
     if not requests:
         print(f"{C.RED}[!] requests missing{C.R}")
@@ -150,41 +213,66 @@ def probe_ssrf(url: str, proxies=None, timeout=6.0, delay=0.15) -> List[dict]:
     s = _session(proxies, timeout)
     findings = []
     params = _params_from_url(url)
-    # also invent common SSRF param names if URL has none
     candidates = params or ["url", "uri", "path", "dest", "redirect", "next", "data",
                             "host", "site", "page", "u", "target", "fetch", "src", "file"]
-
     targets = SSRF_INTERNAL + [t[0] for t in CLOUD_IMDS]
-    print(f"{C.GOLD}[*] SSRF probe — {len(candidates)} param(s), {len(targets)} destinations{C.R}")
+    total = len(candidates) * len(targets)
+    print(f"  {C.GOLD}[*]{C.R} {len(candidates)} param(s) × {len(targets)} destinations = {C.B}{total}{C.R} checks")
+    prog = Progress(total, "ssrf")
 
     for param in candidates:
+        param_hit = False
         for dest in targets:
-            test_url = _inject(url, param, dest) if params else f"{url.rstrip('/')}?{param}={quote(dest, safe='')}"
-            time.sleep(delay)
+            test_url = (
+                _inject(url, param, dest)
+                if params
+                else f"{url.rstrip('/')}?{param}={quote(dest, safe='')}"
+            )
+            if delay:
+                time.sleep(delay)
             r = _get(s, test_url, timeout=timeout)
-            if not r:
-                continue
-            body = r.text or ""
-            hit = any(sig.lower() in body.lower() for sig in SSRF_SIGNATURES)
-            # cloud header tricks
-            if "169.254.169.254" in dest or "metadata" in dest:
-                # retry with required headers
-                headers = {}
-                if "google" in dest or "computeMetadata" in dest:
-                    headers["Metadata-Flavor"] = "Google"
-                if "api-version" in dest:
-                    headers["Metadata"] = "true"
-                r2 = _get(s, test_url, headers=headers, timeout=timeout)
-                if r2 and any(sig.lower() in (r2.text or "").lower() for sig in SSRF_SIGNATURES):
-                    hit = True
-                    body = r2.text
-            if hit or (r.status_code == 200 and len(body) > 20 and dest.startswith("http://127")):
-                f = {"type": "SSRF", "param": param, "payload": dest, "url": test_url,
-                     "status": r.status_code, "evidence": body[:300]}
-                findings.append(f)
-                _print_finding("SSRF", f"param={param} → {dest}", body[:120])
-                break  # one hit per param enough
+            hit = False
+            body = ""
+            if r is not None:
+                body = r.text or ""
+                hit = any(sig.lower() in body.lower() for sig in SSRF_SIGNATURES)
+                if "169.254.169.254" in dest or "metadata" in dest:
+                    headers = {}
+                    if "google" in dest or "computeMetadata" in dest:
+                        headers["Metadata-Flavor"] = "Google"
+                    if "api-version" in dest:
+                        headers["Metadata"] = "true"
+                    r2 = _get(s, test_url, headers=headers, timeout=timeout)
+                    if r2 and any(sig.lower() in (r2.text or "").lower() for sig in SSRF_SIGNATURES):
+                        hit = True
+                        body = r2.text or ""
+                if hit or (
+                    r.status_code == 200
+                    and len(body) > 20
+                    and dest.startswith("http://127")
+                ):
+                    findings.append({
+                        "type": "SSRF",
+                        "param": param,
+                        "payload": dest,
+                        "url": test_url,
+                        "status": r.status_code,
+                        "evidence": body[:300],
+                    })
+                    prog.tick(hit=True, detail=f"{param}")
+                    print()
+                    _print_finding("SSRF", f"param={param} → {dest}", body[:120])
+                    param_hit = True
+                    # count remaining destinations for this param as done
+                    # (we break early)
+                    break
+            prog.tick(detail=f"{param}")
+        if param_hit:
+            # pad progress for skipped dests after break
+            pass
+    prog.done(f"SSRF — {len(findings)} hit(s)")
     return findings
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -216,7 +304,7 @@ def probe_ssti(url: str, proxies=None, timeout=6.0, delay=0.15) -> List[dict]:
     if not params:
         print(f"{C.YEL}[!] No query params for SSTI — skipping{C.R}")
         return []
-    print(f"{C.GOLD}[*] SSTI probe — {len(params)} param(s){C.R}")
+    print(f"  {C.GOLD}[*]{C.R} SSTI probe — {len(params)} param(s){C.R}")
     for param in params:
         baseline = _get(s, url, timeout=timeout)
         base_text = (baseline.text if baseline else "") or ""
@@ -233,6 +321,7 @@ def probe_ssti(url: str, proxies=None, timeout=6.0, delay=0.15) -> List[dict]:
                 findings.append(f)
                 _print_finding(f"SSTI ({engine})", f"param={param} payload={payload}", body[:120])
                 break
+    print(f"  {C.GREEN}[✓]{C.R} SSTI — {len(findings)} hit(s)")
     return findings
 
 
@@ -285,6 +374,7 @@ def probe_log4shell(url: str, callback_host: str = "oast.example", proxies=None,
             findings.append({"type": "Log4Shell-emit-header", "header": h, "payload": p, "marker": marker})
 
     print(f"{C.NEON}[+] Emitted {len(findings)} JNDI payloads (marker={marker}){C.R}")
+    print(f"  {C.GREEN}[✓]{C.R} Log4Shell — {len(findings)} hit(s)")
     return findings
 
 
@@ -337,6 +427,7 @@ def probe_traversal(url: str, proxies=None, timeout=6.0, delay=0.12) -> List[dic
                 findings.append(f)
                 _print_finding("Path Traversal / LFI", f"param={param}", body[:120])
                 break
+    print(f"  {C.GREEN}[✓]{C.R} Traversal — {len(findings)} hit(s)")
     return findings
 
 
@@ -379,6 +470,7 @@ def probe_open_redirect(url: str, proxies=None, timeout=6.0, delay=0.1) -> List[
                 findings.append(f)
                 _print_finding("Open Redirect", f"param={param} → {loc}", loc)
                 break
+    print(f"  {C.GREEN}[✓]{C.R} Redirect — {len(findings)} hit(s)")
     return findings
 
 
@@ -562,7 +654,8 @@ def probe_secrets_and_actuators(base_url: str, proxies=None, timeout=5.0,
     findings = []
     parsed = urlparse(base_url)
     root = f"{parsed.scheme}://{parsed.netloc}"
-    print(f"{C.GOLD}[*] Actuator / secrets / debug path probe ({len(ACTUATOR_PATHS)} paths){C.R}")
+    print(f"  {C.GOLD}[*]{C.R} path probe — {C.B}{len(ACTUATOR_PATHS)}{C.R} paths · {threads} threads")
+    prog = Progress(len(ACTUATOR_PATHS), "paths")
 
     def check(path):
         u = root + path
@@ -597,10 +690,14 @@ def probe_secrets_and_actuators(base_url: str, proxies=None, timeout=5.0,
     with ThreadPoolExecutor(max_workers=threads) as ex:
         futs = {ex.submit(check, p): p for p in ACTUATOR_PATHS}
         for fut in as_completed(futs):
+            path = futs[fut]
             res = fut.result()
+            prog.tick(hit=bool(res), detail=path[:28])
             if res:
                 findings.append(res)
+                print()
                 _print_finding("Exposed Path", f"{res['path']} ({res['reason']})", res["evidence"][:100])
+    prog.done(f"paths — {len(findings)} hit(s)")
     return findings
 
 
@@ -692,38 +789,65 @@ def probe_smuggling(url: str, proxies=None, timeout=8.0) -> List[dict]:
 def run_modern_scan(url: str, proxies=None, timeout=6.0, delay=0.12,
                     oast: str = "oast.example") -> Dict[str, List[dict]]:
     print()
-    print(f"{C.NEON}{C.B}{'=' * 62}{C.R}")
-    print(f"{C.NEON}{C.B}  MODERN ATTACK SURFACE SCAN{C.R}")
-    print(f"{C.NEON}{C.B}{'=' * 62}{C.R}")
-    print(f"{C.GRAY}Target: {url}{C.R}")
+    print(f"{C.FRAME}{C.B}┌{'─' * 60}┐{C.R}")
+    print(f"{C.FRAME}{C.B}│{C.R}  {C.NEON}{C.B}MODERN ATTACK SURFACE SCAN{C.R}{' ' * 32}{C.FRAME}{C.B}│{C.R}")
+    print(f"{C.FRAME}{C.B}└{'─' * 60}┘{C.R}")
+    print(f"  {C.GRAY}target{C.R}  {C.WHT}{url}{C.R}")
+    print(f"  {C.GRAY}timeout{C.R} {timeout}s   {C.GRAY}delay{C.R} {delay}s")
     print()
 
+    stages = [
+        ("SSRF + Cloud IMDS", lambda: probe_ssrf(url, proxies, timeout, delay)),
+        ("SSTI", lambda: probe_ssti(url, proxies, timeout, delay)),
+        ("Log4Shell / JNDI", lambda: probe_log4shell(url, oast, proxies, timeout, delay)),
+        ("Path Traversal / LFI", lambda: probe_traversal(url, proxies, timeout, delay)),
+        ("Open Redirect", lambda: probe_open_redirect(url, proxies, timeout, delay)),
+        ("CORS", lambda: probe_cors(url, proxies, timeout)),
+        ("Host Header", lambda: probe_host_header(url, proxies, timeout)),
+        ("GraphQL", lambda: probe_graphql(url, proxies, timeout)),
+        ("JWT surface", lambda: probe_jwt(url, proxies, timeout)),
+        ("Secrets / Actuator", lambda: probe_secrets_and_actuators(url, proxies, timeout)),
+        ("Request Smuggling", lambda: probe_smuggling(url, proxies, timeout)),
+    ]
+    keys = ["ssrf", "ssti", "log4shell", "traversal", "redirect", "cors",
+            "host", "graphql", "jwt", "secrets", "smuggling"]
     results: Dict[str, List[dict]] = {}
-    results["ssrf"] = probe_ssrf(url, proxies, timeout, delay)
-    results["ssti"] = probe_ssti(url, proxies, timeout, delay)
-    results["log4shell"] = probe_log4shell(url, oast, proxies, timeout, delay)
-    results["traversal"] = probe_traversal(url, proxies, timeout, delay)
-    results["redirect"] = probe_open_redirect(url, proxies, timeout, delay)
-    results["cors"] = probe_cors(url, proxies, timeout)
-    results["host"] = probe_host_header(url, proxies, timeout)
-    results["graphql"] = probe_graphql(url, proxies, timeout)
-    results["jwt"] = probe_jwt(url, proxies, timeout)
-    results["secrets"] = probe_secrets_and_actuators(url, proxies, timeout)
-    results["smuggling"] = probe_smuggling(url, proxies, timeout)
+    t0 = time.time()
+    for i, ((title, fn), key) in enumerate(zip(stages, keys), 1):
+        stage(title, i, len(stages))
+        try:
+            results[key] = fn() or []
+        except KeyboardInterrupt:
+            print(f"\n  {C.YEL}[!] interrupted at stage {i}{C.R}")
+            results[key] = results.get(key) or []
+            break
+        except Exception as e:
+            print(f"  {C.CRIM}[!] stage error: {e}{C.R}")
+            results[key] = []
+        n = len(results.get(key) or [])
+        mark = f"{C.LIME}{n} hit(s){C.R}" if n else f"{C.GRAY}clean{C.R}"
+        print(f"  {C.GRAY}└─{C.R} {mark}")
 
     total = sum(len(v) for v in results.values())
+    elapsed = time.time() - t0
     print()
-    print(f"{C.NEON}{'=' * 62}{C.R}")
-    print(f"{C.B}  SCAN COMPLETE — {total} finding(s){C.R}")
-    print(f"{C.NEON}{'=' * 62}{C.R}")
+    print(f"{C.FRAME}{C.B}┌{'─' * 60}┐{C.R}")
+    print(f"{C.FRAME}{C.B}│{C.R}  {C.B}SCAN COMPLETE{C.R}  {C.GRAY}{total} finding(s) · {elapsed:.1f}s{C.R}")
+    print(f"{C.FRAME}{C.B}└{'─' * 60}┘{C.R}")
     for k, v in results.items():
-        color = C.RED if v else C.GREEN
-        print(f"  {color}{k:12} {len(v):3}{C.R}")
+        color = C.CRIM if v else C.GRAY
+        bar = "●" if v else "○"
+        print(f"  {color}{bar}{C.R} {k:12} {C.B}{len(v):3}{C.R}")
     return results
 
 
 def save_report(results: Dict[str, List[dict]], url: str, path: Optional[str] = None) -> str:
-    path = path or f"modern_scan_{int(time.time())}.txt"
+    try:
+        from core_utils import reports_dir
+        base = reports_dir()
+    except Exception:
+        base = "."
+    path = path or os.path.join(base, f"modern_scan_{int(time.time())}.txt")
     with open(path, "w", encoding="utf-8") as f:
         f.write("=" * 60 + "\n  MODERN ATTACK SURFACE — RESULTS\n" + "=" * 60 + "\n\n")
         f.write(f"Target: {url}\n\n")
@@ -794,9 +918,9 @@ def run_full_modern_scan():
 def show_modern_menu():
     while True:
         print()
-        print(f"{C.NEON}{'=' * 54}{C.R}")
-        print(f"{C.B}  MODERN ATTACK MODULES{C.R}")
-        print(f"{C.NEON}{'=' * 54}{C.R}")
+        print(f"{C.FRAME}{C.B}┌{'─' * 52}┐{C.R}")
+        print(f"{C.FRAME}{C.B}│{C.R}  {C.NEON}{C.B}MODERN ATTACK MODULES{C.R}{' ' * 30}{C.FRAME}{C.B}│{C.R}")
+        print(f"{C.FRAME}{C.B}└{'─' * 52}┘{C.R}")
         print(f"  {C.GREEN}1){C.R} SSRF + Cloud IMDS")
         print(f"  {C.GREEN}2){C.R} SSTI (Jinja/Twig/Freemarker/EL)")
         print(f"  {C.GREEN}3){C.R} Log4Shell / JNDI emitter")
