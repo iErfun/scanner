@@ -82,9 +82,14 @@ jobs:
             --include-module=cryptography.hazmat.primitives.kdf.pbkdf2 \
             --include-module=cryptography.hazmat.primitives.hashes \
             --include-module=cryptography.hazmat.backends \
+            --include-module=socks \
+            --include-module=faker \
+            --include-module=paramiko \
             --nofollow-import-to=playwright \
             --nofollow-import-to=pytest \
             --nofollow-import-to=unittest \
+            --nofollow-import-to=tkinter \
+            --nofollow-import-to=matplotlib \
             runner_code.py
 
       - name: Upload artifact
