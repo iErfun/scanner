@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 import os
 import sys
+import logging
+import warnings
+warnings.filterwarnings("ignore")
+os.environ.setdefault("SCAPY_USE_PCAPDNET", "0")
+for _n in ("scapy", "scapy.runtime", "scapy.loading", "scapy.layers"):
+    logging.getLogger(_n).setLevel(logging.CRITICAL)
 import re as _re
 import socket
 import subprocess
@@ -172,9 +178,8 @@ def attack_banner():
         ("5", f"{C.YEL}Injection Pack{C.R}  {C.DIM_GRAY}(CMDi/XXE/CRLF){C.R}"),
         ("6", f"{C.NEON_LIME}Header / Tech Audit{C.R}"),
         ("7", f"{C.GOLD}JS Secret Hunter{C.R}"),
-        ("8", f"{C.NEON_CYAN}Port Scanner{C.R}"),
-        ("9", f"{C.CORNFLOWER}Dir Brute{C.R}"),
-        ("10", f"{C.NEON_PURPLE}Tech Detect{C.R}"),
+        ("8", f"{C.CORNFLOWER}Dir Brute{C.R}"),
+        ("9", f"{C.NEON_PURPLE}Tech Detect{C.R}"),
         ("0", f"{C.DIM_GRAY}Back{C.R}"),
     ]))
 
@@ -200,8 +205,6 @@ def osint_banner():
         ("2", f"{C.CORNFLOWER}IP Intel{C.R}"),
         ("3", f"{C.NEON_PURPLE}Metadata Extractor{C.R}"),
         ("4", f"{C.YEL}Email Checker{C.R}"),
-        ("5", f"{C.NEON_LIME}Subdomain Enum{C.R}"),
-        ("6", f"{C.GOLD}DNS Tools{C.R}  {C.DIM_GRAY}(AXFR/records){C.R}"),
         ("0", f"{C.DIM_GRAY}Back{C.R}"),
     ]))
 
@@ -291,10 +294,8 @@ def attack_menu():
         elif c == "7":
             _safe("js_secrets", lambda: _run_module("js_secrets"))
         elif c == "8":
-            _safe("port_scan", lambda: _run_module("port_scan"))
-        elif c == "9":
             _safe("dir_brute", lambda: _run_module("dir_brute"))
-        elif c == "10":
+        elif c == "9":
             _safe("tech_detect", lambda: _run_module("tech_detect"))
         else:
             print(f"{C.CRIMSON}[!] Invalid{C.R}")
@@ -308,8 +309,6 @@ def osint_menu():
         "2": "osint.ip_intel",
         "3": "osint.metadata",
         "4": "email_checker",
-        "5": "subdomain_enum",
-        "6": "dns_tools",
     }
     while True:
         osint_banner()

@@ -1,3 +1,12 @@
+# early noise control (libpcap / scapy on Windows)
+import os as _os_early
+import logging as _logging_early
+import warnings as _warnings_early
+_warnings_early.filterwarnings("ignore")
+_os_early.environ.setdefault("SCAPY_USE_PCAPDNET", "0")
+for _n in ("scapy", "scapy.runtime", "scapy.loading", "scapy.layers"):
+    _logging_early.getLogger(_n).setLevel(_logging_early.CRITICAL)
+
 import socket
 import time
 import sys
@@ -21,7 +30,13 @@ import requests
 
 # proxy_tester loaded via optional import below as px
 
-logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
+# silence scapy/libpcap noise before any scapy import
+import warnings
+warnings.filterwarnings("ignore", message=".*libpcap.*")
+warnings.filterwarnings("ignore", message=".*pcap.*")
+for _name in ("scapy", "scapy.runtime", "scapy.loading", "scapy.layers"):
+    logging.getLogger(_name).setLevel(logging.CRITICAL)
+logging.getLogger("scapy.runtime").setLevel(logging.CRITICAL)
 logger = logging.getLogger("scanner")
 
 try:
@@ -32,6 +47,8 @@ except (AttributeError, ValueError):
 print = functools.partial(print, flush=True)
 
 try:
+    import os as _os_scapy
+    _os_scapy.environ.setdefault("SCAPY_USE_PCAPDNET", "0")
     from scapy.all import IP, TCP, UDP, ICMP, Raw, sr1, sr, sniff, fragment
     from scapy.layers.http import HTTPRequest
     from scapy.layers.dns import DNS
@@ -3155,11 +3172,13 @@ def main():
         box_line("9) OS Scanner", text_color=Colors.SKY_BLUE)
         box_line("10) Email Scanner", text_color=Colors.SKY_BLUE)
         box_line("11) proxy tester", text_color=Colors.SKY_BLUE)
+        box_line("12) Port Scanner", text_color=Colors.SKY_BLUE)
+        box_line("13) DNS Tools", text_color=Colors.SKY_BLUE)
         box_bottom()
 
-        scan_mode = typed_input(Colors.AQUA + "[?] Choose mode (1-11): " + Colors.RESET).strip()
+        scan_mode = typed_input(Colors.AQUA + "[?] Choose mode (1-13): " + Colors.RESET).strip()
 
-        if scan_mode not in ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"]:
+        if scan_mode not in ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13"]:
             print(Colors.RED + "[!] Invalid scan mode." + Colors.RESET)
             time.sleep(1)
             continue
@@ -3235,6 +3254,24 @@ def main():
                 print(f"{Colors.RED}[!] proxy_tester.py not found or has errors{Colors.RESET}")
                 print(f"{Colors.DIM_GRAY}Error: {PROXYTEST_ERROR}{Colors.RESET}")
                 input(Colors.DIM_GRAY + "\n[Press Enter to continue] " + Colors.RESET)
+
+        if scan_mode == "12":
+            try:
+                import port_scan as _ps
+                _ps.run()
+            except Exception as e:
+                print(Colors.RED + f"[!] port_scan: {e}" + Colors.RESET)
+                input(Colors.DIM_GRAY + "\n[Press Enter to continue] " + Colors.RESET)
+            continue
+        if scan_mode == "13":
+            try:
+                import dns_tools as _dns
+                _dns.run()
+            except Exception as e:
+                print(Colors.RED + f"[!] dns_tools: {e}" + Colors.RESET)
+                input(Colors.DIM_GRAY + "\n[Press Enter to continue] " + Colors.RESET)
+            continue
+
             continue
 
         if scan_mode == "1":
@@ -3535,16 +3572,26 @@ def main():
             continue
         if scan_mode == "4":
             domain = typed_input(Colors.AQUA + "[?] Enter domain: " + Colors.RESET).strip()
-            scan_choice = typed_input(
-                Colors.RED + f"[?] Start subdomain scan for {domain}? [y/n]: " + Colors.RESET).strip().lower()
-            if scan_choice in ["y", "yes"]:
-                found = subdomain_scanner(domain)
-                if found:
-                    print(Colors.GOLD + f"\n[*] Found {len(found)} subdomains:" + Colors.RESET)
-                    for sub, ip in found:
-                        print(Colors.GREEN + f"  [+] {sub} --> {ip}" + Colors.RESET)
-                else:
-                    print(Colors.RED + "[!] No subdomains found." + Colors.RESET)
+            if not domain:
+                print(Colors.RED + "[!] Empty domain." + Colors.RESET)
+                continue
+            # Prefer full module (crt.sh + ThreatCrowd + HackerTarget + DNS brute)
+            try:
+                import subdomain_enum as _sub_mod
+                print(Colors.GOLD + f"[*] Running full subdomain enum for {domain} ..." + Colors.RESET)
+                _sub_mod.run(domain)
+            except Exception as _sub_err:
+                print(Colors.YELLOW + f"[~] module fallback ({_sub_err}) — quick DNS brute" + Colors.RESET)
+                scan_choice = typed_input(
+                    Colors.RED + f"[?] Start quick subdomain scan for {domain}? [y/n]: " + Colors.RESET).strip().lower()
+                if scan_choice in ["y", "yes"]:
+                    found = subdomain_scanner(domain)
+                    if found:
+                        print(Colors.GOLD + f"\n[*] Found {len(found)} subdomains:" + Colors.RESET)
+                        for sub, ip in found:
+                            print(Colors.GREEN + f"  [+] {sub} --> {ip}" + Colors.RESET)
+                    else:
+                        print(Colors.RED + "[!] No subdomains found." + Colors.RESET)
             continue
         if scan_mode == "5":
             target = typed_input(Colors.AQUA + "[?] Enter IP or Hostname: " + Colors.RESET).strip()
@@ -3742,11 +3789,6 @@ def main():
             box_line(f"Delay: {delay}s", text_color=Colors.GOLD)
             box_line(f"Open Ports: {len(open_ports)}",
                      text_color=Colors.GREEN if open_ports else Colors.RED)
-            if open_ports:
-                for p in open_ports:
-                    box_line(f"* {p} {get_service(p)}", text_color=Colors.GREEN)
-            box_bottom()
-            continue
             if open_ports:
                 for p in open_ports:
                     box_line(f"* {p} {get_service(p)}", text_color=Colors.GREEN)
