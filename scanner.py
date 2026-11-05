@@ -71,6 +71,13 @@ except Exception as e:
     HAS_PROXYTEST = False
     PROXYTEST_ERROR = str(e)
 
+try:
+    import attacks_modern as modern
+    HAS_MODERN = True
+except Exception as e:
+    HAS_MODERN = False
+    MODERN_ERROR = str(e)
+
 _original_socket = socket.socket
 
 MAX_PING_SWEEP_HOSTS = 4096
@@ -3065,11 +3072,12 @@ def show_web_menu():
         box_line("2) SQL Injection Scanner", text_color=Colors.GREEN + Colors.BOLD)
         box_line("3) XSS Scanner", text_color=Colors.GREEN + Colors.BOLD)
         box_line("4) LFI Scanner", text_color=Colors.GREEN + Colors.BOLD)
-        box_line("5) Full Web Scan           [Coming Soon]", text_color=Colors.DIM_GRAY)
-        box_line("6) Back to Main Menu", text_color=Colors.SKY_BLUE)
+        box_line("5) Modern Attack Modules   [SSRF/SSTI/Log4j/JWT/...]", text_color=Colors.NEON_PURPLE + Colors.BOLD)
+        box_line("6) Full Modern Web Scan", text_color=Colors.NEON_CYAN + Colors.BOLD)
+        box_line("7) Back to Main Menu", text_color=Colors.SKY_BLUE)
         box_bottom()
 
-        choice = typed_input(Colors.AQUA + "[?] Choose (1-6): " + Colors.RESET).strip()
+        choice = typed_input(Colors.AQUA + "[?] Choose (1-7): " + Colors.RESET).strip()
         if choice == "1":
             return "1"
         elif choice == "2":
@@ -3079,14 +3087,10 @@ def show_web_menu():
         elif choice == "4":
             return "4"
         elif choice == "5":
-            print()
-            print(Colors.YELLOW + "+------------------------------------------------+" + Colors.RESET)
-            print(Colors.YELLOW + "|  [!] This tool is not available yet.           |" + Colors.RESET)
-            print(Colors.YELLOW + "+------------------------------------------------+" + Colors.RESET)
-            print()
-            input(Colors.DIM_GRAY + "[Press Enter to go back] " + Colors.RESET)
-            continue
-        elif choice in ("6", "0"):
+            return "5"
+        elif choice == "6":
+            return "6"
+        elif choice in ("7", "0"):
             return "0"
         else:
             print(Colors.RED + "[!] Invalid option." + Colors.RESET)
@@ -3168,6 +3172,18 @@ def main():
                     run_xss_scanner()
                 elif web_mode == "4":
                     run_lfi_scanner()
+                elif web_mode == "5":
+                    if HAS_MODERN:
+                        modern.show_modern_menu()
+                    else:
+                        print(f"{Colors.RED}[!] attacks_modern.py missing: {MODERN_ERROR}{Colors.RESET}")
+                        input(Colors.DIM_GRAY + "\n[Press Enter] " + Colors.RESET)
+                elif web_mode == "6":
+                    if HAS_MODERN:
+                        modern.run_full_modern_scan()
+                    else:
+                        print(f"{Colors.RED}[!] attacks_modern.py missing: {MODERN_ERROR}{Colors.RESET}")
+                        input(Colors.DIM_GRAY + "\n[Press Enter] " + Colors.RESET)
                 elif web_mode == "0":
                     break
             continue

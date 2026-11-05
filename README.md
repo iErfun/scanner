@@ -271,3 +271,33 @@ https://github.com/iErfun
 <br>
 
 </div>
+
+
+---
+
+## ⚡ Modern Attack Modules (NEW)
+
+Added in `attacks_modern.py` and wired into **Web Scanning Tools**:
+
+| # | Module | What it probes |
+|---|--------|----------------|
+| 1 | SSRF + Cloud IMDS | 127.0.0.1 variants, AWS/GCP/Azure metadata, decimal/hex IP bypasses |
+| 2 | SSTI | Jinja2, Twig, Freemarker, Spring EL, Thymeleaf, ERB math + object probes |
+| 3 | Log4Shell / JNDI | Classic + obfuscated `${jndi:ldap/rmi/dns}` emitters (pair with your OAST) |
+| 4 | Advanced Traversal | Double-encoding, wrappers (`php://filter`, `expect://`, `data://`), win.ini |
+| 5 | Open Redirect | `//`, `/\`, null-byte, fragment tricks |
+| 6 | CORS | Origin reflection + `ACAO=*` with credentials |
+| 7 | Host Header | Host / X-Forwarded-Host / X-Host injection |
+| 8 | GraphQL | Introspection on common endpoints |
+| 9 | JWT | Detect tokens, flag `alg=none`, craft none-candidate |
+| 10 | Secrets / Actuator | Spring Actuator, `.env`, `.git/HEAD`, heapdump, Next.js paths |
+| 11 | Request Smuggling | Light CL.TE / TE.CL desync signals |
+| 12 | **Full Modern Scan** | Runs all of the above, optional report save |
+
+**Menu path:** Main → `8) Web Scanning Tools` → `5) Modern Attack Modules` or `6) Full Modern Web Scan`
+
+```bash
+python scanner.py
+# or standalone:
+python attacks_modern.py
+```
