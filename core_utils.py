@@ -48,21 +48,122 @@ UA_POOL = [
 ]
 
 
-def session(timeout: float = 12.0, proxies: Optional[Dict[str, str]] = None, verify: bool = False):
+def session(timeout: float = 12.0, proxies: Optional[Dict[str, str]] = None,
+            verify: bool = False, headers: Optional[Dict[str, str]] = None):
     if requests is None:
         raise RuntimeError("requests required: pip install requests")
     s = requests.Session()
     s.verify = verify
-    s.headers.update({
+    base_headers = {
         "User-Agent": random.choice(UA_POOL),
         "Accept": "*/*",
         "Accept-Language": "en-US,en;q=0.9",
         "Connection": "close",
-    })
+    }
+    if headers:
+        base_headers.update(headers)
+    s.headers.update(base_headers)
     if proxies:
         s.proxies.update(proxies)
     s.timeout = timeout
     return s
+
+
+def preflight_attack():
+    """Shared speed / proxy / fake-IP / header setup for attack modules.
+    Returns dict: delay, threads, proxies, headers, speed_label, mode_label
+    """
+    print(f"\n{C.FRAME}{C.B}+{'-'*56}+{C.R}")
+    print(f"{C.FRAME}{C.B}|{C.R}  {C.B}SELECT SCAN SPEED{C.R}")
+    print(f"{C.FRAME}{C.B}+{'-'*56}+{C.R}")
+    print(f"  {C.GREEN}1){C.R} Super Slow   delay=1.00  threads=2")
+    print(f"  {C.GREEN}2){C.R} Slow         delay=0.50  threads=4")
+    print(f"  {C.GREEN}3){C.R} Normal       delay=0.20  threads=8")
+    print(f"  {C.GREEN}4){C.R} Fast         delay=0.05  threads=16")
+    print(f"  {C.GREEN}5){C.R} Super Fast   delay=0.01  threads=32")
+    print(f"  {C.GREEN}6){C.R} Custom")
+    print(f"{C.FRAME}{C.B}+{'-'*56}+{C.R}")
+    ch = input(f"{C.AQUA}[?] speed (1-6): {C.R}").strip()
+    table = {
+        "1": (1.00, 2, "Super Slow"),
+        "2": (0.50, 4, "Slow"),
+        "3": (0.20, 8, "Normal"),
+        "4": (0.05, 16, "Fast"),
+        "5": (0.01, 32, "Super Fast"),
+    }
+    if ch == "6":
+        try:
+            delay = float(input(f"{C.AQUA}[?] delay sec: {C.R}").strip() or "0.2")
+        except ValueError:
+            delay = 0.2
+        try:
+            threads = int(input(f"{C.AQUA}[?] threads: {C.R}").strip() or "8")
+        except ValueError:
+            threads = 8
+        threads = max(1, min(64, threads))
+        speed_label = f"Custom ({threads}t/{delay}s)"
+    else:
+        delay, threads, speed_label = table.get(ch, (0.20, 8, "Normal"))
+
+    print(f"\n{C.FRAME}{C.B}+{'-'*56}+{C.R}")
+    print(f"{C.FRAME}{C.B}|{C.R}  {C.B}CONNECTION / IP MODE{C.R}")
+    print(f"{C.FRAME}{C.B}+{'-'*56}+{C.R}")
+    print(f"  {C.GREEN}1){C.R} Own IP")
+    print(f"  {C.GREEN}2){C.R} Custom Proxy (paste or file path)")
+    print(f"  {C.GREEN}3){C.R} Fake IP headers (faker)")
+    print(f"  {C.GREEN}4){C.R} Proxy + Fake IP")
+    print(f"{C.FRAME}{C.B}+{'-'*56}+{C.R}")
+    mc = input(f"{C.AQUA}[?] mode (1-4): {C.R}").strip()
+
+    proxies = None
+    headers: Dict[str, str] = {}
+    mode_label = "Own IP"
+    proxy_list = []
+
+    if mc in ("2", "4"):
+        first = input(f"{C.AQUA}[?] proxy URL or proxies.txt path: {C.R}").strip()
+        if first and os.path.isfile(first):
+            with open(first, "r", encoding="utf-8", errors="ignore") as f:
+                proxy_list = [ln.strip() for ln in f if ln.strip() and not ln.startswith("#")]
+        elif first:
+            proxy_list = [first]
+            while True:
+                line = input(f"{C.AQUA}[?] +proxy (empty=done): {C.R}").strip()
+                if not line:
+                    break
+                proxy_list.append(line)
+        if proxy_list:
+            p = random.choice(proxy_list)
+            proxies = {"http": p, "https": p}
+            mode_label = f"Proxy x{len(proxy_list)}"
+            print(f"  {C.GREEN}[+]{C.R} using {p}")
+
+    if mc in ("3", "4"):
+        try:
+            from faker import Faker
+            ip = Faker().ipv4_public()
+            headers.update({
+                "X-Forwarded-For": ip,
+                "X-Real-IP": ip,
+                "X-Client-IP": ip,
+                "CF-Connecting-IP": ip,
+                "True-Client-IP": ip,
+                "Forwarded": f"for={ip};proto=https",
+            })
+            mode_label = (mode_label + " + FakeIP") if mc == "4" else f"Fake IP ({ip})"
+            print(f"  {C.GREEN}[+]{C.R} fake IP headers → {ip}")
+        except Exception as e:
+            print(f"  {C.YEL}[!] faker: {e}{C.R}")
+
+    print(f"  {C.GREEN}[+]{C.R} speed={speed_label}  mode={mode_label}  delay={delay}s  threads={threads}")
+    return {
+        "delay": delay,
+        "threads": threads,
+        "proxies": proxies,
+        "headers": headers,
+        "speed_label": speed_label,
+        "mode_label": mode_label,
+    }
 
 
 def get(s, url, **kw):
