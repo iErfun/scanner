@@ -116,18 +116,18 @@ class Colors:
     BOLD = "[1m"
     RESET = "[0m"
     ORANGE = "[38;2;251;146;60m"
-    DIM_GRAY = "[38;2;100;105;120m"
-    NEON_CYAN = "[38;2;0;255;200m"
-    NEON_PURPLE = "[38;2;168;85;247m"
+    DIM_GRAY = "[38;2;137;151;171m"
+    NEON_CYAN = "[38;2;82;190;255m"
+    NEON_PURPLE = "[38;2;151;145;235m"
     CORNFLOWER_BLUE = "[38;2;96;165;250m"
     SKY_BLUE = "[38;2;125;211;252m"
-    FRAME = "[38;2;139;92;246m"
-    CRIMSON = "[38;2;248;113;113m"
-    AQUA = "[38;2;34;211;238m"
+    FRAME = "[38;2;77;105;145m"
+    CRIMSON = "[38;2;232;112;125m"
+    AQUA = "[38;2;82;190;255m"
     TEAL = "[38;2;45;212;191m"
-    GOLD = "[38;2;255;200;60m"
-    LIME = "[38;2;163;230;53m"
-    PINK = "[38;2;244;114;182m"
+    GOLD = "[38;2;239;190;112m"
+    LIME = "[38;2;111;204;166m"
+    PINK = "[38;2;151;145;235m"
     DIM = "[2m"
 
 
@@ -2586,7 +2586,6 @@ def run_xss_scanner():
 |__/  \__/|_______/|_______/       |_______/  \_______/ \_______/|__/  |__/
 
     {Colors.RESET}""")
-    print(f"{Colors.YELLOW}  [!] For educational and authorized testing only{Colors.RESET}")
     print()
     if HAS_FAKER:
         print(f"{Colors.GREEN}[+] Faker loaded - random profiles enabled{Colors.RESET}")
@@ -2942,7 +2941,6 @@ $$ |$$ |      $$ |      $$$$$$$  |\$$$$$$$\\$$$$$$$ |$$ |  $$ |
 
 
     {Colors.RESET}""")
-    print(f"{Colors.YELLOW}  [!] For educational and authorized testing only{Colors.RESET}")
     print()
 
     user_input = typed_input(Colors.AQUA + "[?] Enter target (domain or URL): " + Colors.RESET).strip()
@@ -3074,48 +3072,35 @@ $$ |$$ |      $$ |      $$$$$$$  |\$$$$$$$\\$$$$$$$ |$$ |  $$ |
 
 
 def show_web_menu():
+    options = [
+        ("1", "Directory Discovery"),
+        ("2", "SQL Injection Assessment"),
+        ("3", "XSS Assessment"),
+        ("4", "Local File Inclusion"),
+        ("5", "Modern Assessment Modules"),
+        ("6", "Full Modern Assessment"),
+        ("0", "Back"),
+    ]
     while True:
         os.system("clear" if os.name == "posix" else "cls")
-        print(f"""{Colors.GREEN}{Colors.BOLD}
-██╗    ██╗ ███████╗  ██████╗    ███████╗  ██████╗ █████╗  ███╗   ██╗
-██║    ██║ ██╔════╝  ██╔══██╗   ██╔════╝ ██╔════╝██╔══██╗ ████╗  ██║
-██║ █╗ ██║ █████╗    ██████╔╝   ███████╗ ██║     ███████║ ██╔██╗ ██║
-██║███╗██║ ██╔══╝    ██╔══██╗   ╚════██║ ██║     ██╔══██║ ██║╚██╗██║
-╚███╔███╔╝ ███████╗  ██████╔╝   ███████║ ╚██████╗██║  ██║ ██║ ╚████║
- ╚══╝╚══╝   ╚══════╝ ╚═════╝    ╚══════╝  ╚═════╝╚═╝  ╚═╝ ╚═╝  ╚═══╝
-        {Colors.RESET}""")
-        box_top()
-        box_line("WEB SCANNING TOOLS", text_color=Colors.NEON_CYAN + Colors.BOLD)
-        box_divider()
-        box_line("1) Directory Buster", text_color=Colors.SKY_BLUE)
-        box_line("2) SQL Injection Scanner", text_color=Colors.SKY_BLUE)
-        box_line("3) XSS Scanner", text_color=Colors.SKY_BLUE)
-        box_line("4) LFI Scanner", text_color=Colors.SKY_BLUE)
-        box_line("5) Modern Modules", text_color=Colors.NEON_PURPLE + Colors.BOLD)
-        box_line("6) Full Modern Scan", text_color=Colors.NEON_CYAN + Colors.BOLD)
-        box_line("0) Back", text_color=Colors.DIM_GRAY)
-        box_bottom()
-
-        choice = typed_input(Colors.AQUA + "[?] Choose (1-7): " + Colors.RESET).strip()
-        if choice == "1":
-            return "1"
-        elif choice == "2":
-            return "2"
-        elif choice == "3":
-            return "3"
-        elif choice == "4":
-            return "4"
-        elif choice == "5":
-            return "5"
-        elif choice == "6":
-            return "6"
-        elif choice in ("7", "0", "b"):
+        print(f"\n{Colors.NEON_CYAN}{Colors.BOLD}  XOMLSX  /  WEB ASSESSMENT{Colors.RESET}")
+        print(f"{Colors.DIM_GRAY}  Select a web testing module{Colors.RESET}\n")
+        width = 58
+        print(f"{Colors.NEON_CYAN}╭{'─' * width}╮{Colors.RESET}")
+        title = "WEB MODULES"
+        print(f"{Colors.NEON_CYAN}│{Colors.RESET}  {Colors.BOLD}{title}{Colors.RESET}{' ' * (width - len(title) - 2)}{Colors.NEON_CYAN}│{Colors.RESET}")
+        print(f"{Colors.NEON_CYAN}├{'─' * width}┤{Colors.RESET}")
+        for key, label in options:
+            row = f"  {Colors.GOLD}{key}{Colors.RESET}  {label}"
+            print(f"{Colors.NEON_CYAN}│{Colors.RESET}{row}{' ' * max(width - len(key) - len(label) - 5, 0)}{Colors.NEON_CYAN}│{Colors.RESET}")
+        print(f"{Colors.NEON_CYAN}╰{'─' * width}╯{Colors.RESET}")
+        choice = typed_input(f"{Colors.NEON_CYAN}[?] Select module (0-6): {Colors.RESET}").strip()
+        if choice in {"1", "2", "3", "4", "5", "6"}:
+            return choice
+        if choice in {"0", "b", "B"}:
             return "0"
-        else:
-            print(Colors.RED + "[!] Invalid option." + Colors.RESET)
-            time.sleep(1)
-            continue
-
+        print(f"{Colors.RED}[!] Invalid option. Choose 0-6.{Colors.RESET}")
+        time.sleep(0.8)
 
 def main():
     logging.basicConfig(
