@@ -61,16 +61,16 @@ class Colors:
     YEL = '\033[93m'
     CYN = '\033[96m'
     WHT = '\033[97m'
-    DIM_GRAY = '\033[38;2;110;110;120m'
-    NEON_CYAN = '\033[38;2;0;255;213m'
-    NEON_PURPLE = '\033[38;2;191;64;255m'
-    CORNFLOWER = '\033[38;2;100;149;237m'
-    CRIMSON = '\033[38;2;220;20;60m'
-    GOLD = '\033[38;2;255;215;0m'
-    NEON_LIME = '\033[38;2;180;255;0m'
-    TEAL = '\033[38;2;0;128;128m'
-    NEON_RED = '\033[38;2;255;50;50m'
-    NEON_ORANGE = '\033[38;2;255;140;0m'
+    DIM_GRAY = '\033[38;2;137;151;171m'
+    NEON_CYAN = '\033[38;2;82;190;255m'
+    NEON_PURPLE = '\033[38;2;151;145;235m'
+    CORNFLOWER = '\033[38;2;100;160;220m'
+    CRIMSON = '\033[38;2;232;112;125m'
+    GOLD = '\033[38;2;239;190;112m'
+    NEON_LIME = '\033[38;2;111;204;166m'
+    TEAL = '\033[38;2;82;190;255m'
+    NEON_RED = '\033[38;2;232;112;125m'
+    NEON_ORANGE = '\033[38;2;239;190;112m'
 
 
 C = Colors
@@ -133,82 +133,45 @@ def box_menu(title, items):
 
 def banner():
     clear()
-    art = (
-        f"{C.NEON_PURPLE}{C.B}\n"
-        "  ██╗  ██╗ ██████╗ ███╗   ███╗██╗     ███████╗██╗  ██╗\n"
-        "  ╚██╗██╔╝██╔═══██╗████╗ ████║██║     ██╔════╝╚██╗██╔╝\n"
-        "   ╚███╔╝ ██║   ██║██╔████╔██║██║     ███████╗ ╚███╔╝\n"
-        "   ██╔██╗ ██║   ██║██║╚██╔╝██║██║     ╚════██║ ██╔██╗\n"
-        "  ██╔╝ ██╗╚██████╔╝██║ ╚═╝ ██║███████╗███████║██╔╝ ██╗\n"
-        "  ╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝\n"
-        f"{C.R}"
-    )
-    print(art)
-    print(f"{C.NEON_CYAN}{C.B}{'OFFENSIVE SECURITY TOOLKIT'.center(66)}{C.R}")
-    print(f"{C.DIM_GRAY}{'authorized testing only'.center(66)}{C.R}\n")
-
+    print(f"\n{C.NEON_CYAN}{C.B}  X O M L S X  /  SECURITY WORKSPACE{C.R}")
+    print(f"{C.DIM_GRAY}  Reconnaissance  •  Assessment  •  Intelligence{C.R}\n")
     print(box_menu("MAIN MENU", [
-        ("1", f"{C.NEON_CYAN}Scanner{C.R}"),
-        ("2", f"{C.NEON_CYAN}Attack{C.R}"),
-        ("3", f"{C.NEON_CYAN}OSINT{C.R}   {C.DIM_GRAY}(javesi){C.R}"),
+        ("1", f"{C.NEON_CYAN}Network Scanner{C.R}"),
+        ("2", f"{C.NEON_CYAN}Attack & Assessment{C.R}"),
+        ("3", f"{C.NEON_CYAN}OSINT & Intelligence{C.R}"),
         ("0", f"{C.DIM_GRAY}Exit{C.R}"),
     ]))
-
+    print(f"\n  {C.DIM_GRAY}Select a workspace to continue.{C.R}")
 
 def attack_banner():
     clear()
-    art = (
-        f"{C.CRIMSON}{C.B}\n"
-        "  █████╗ ████████╗████████╗ █████╗  ██████╗██╗  ██╗\n"
-        " ██╔══██╗╚══██╔══╝╚══██╔══╝██╔══██╗██╔════╝██║ ██╔╝\n"
-        " ███████║   ██║      ██║   ███████║██║     █████╔╝\n"
-        " ██╔══██║   ██║      ██║   ██╔══██║██║     ██╔═██╗\n"
-        " ██║  ██║   ██║      ██║   ██║  ██║╚██████╗██║  ██╗\n"
-        " ╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝\n"
-        f"{C.R}"
-    )
-    print(art)
-    print(f"{C.YEL}{C.B}{'ATTACK MODULES'.center(66)}{C.R}\n")
-
-    print(box_menu("SELECT OPERATION", [
-        ("1", f"{C.NEON_LIME}Bruteforce{C.R}"),
-        ("2", f"{C.NEON_LIME}Wordlist Generator{C.R}"),
-        ("3", f"{C.NEON_LIME}XSS Scanner{C.R}"),
-        ("4", f"{C.NEON_LIME}Modern Attacks{C.R}"),
-        ("5", f"{C.NEON_LIME}SQLi Engine{C.R}"),
-        ("6", f"{C.NEON_LIME}Injection Pack{C.R}"),
-        ("7", f"{C.NEON_LIME}Header / Tech Audit{C.R}"),
-        ("8", f"{C.NEON_LIME}JS Secret Hunter{C.R}"),
-        ("9", f"{C.NEON_LIME}Dir Brute{C.R}"),
-        ("10", f"{C.NEON_LIME}Tech Detect{C.R}"),
+    print(f"\n{C.NEON_PURPLE}{C.B}  ATTACK & ASSESSMENT{C.R}")
+    print(f"{C.DIM_GRAY}  Testing modules and security checks{C.R}\n")
+    print(box_menu("MODULES", [
+        ("1", f"{C.NEON_CYAN}Bruteforce{C.R}"),
+        ("2", f"{C.NEON_CYAN}Wordlist Generator{C.R}"),
+        ("3", f"{C.NEON_CYAN}XSS Scanner{C.R}"),
+        ("4", f"{C.NEON_CYAN}Modern Assessment{C.R}"),
+        ("5", f"{C.NEON_CYAN}SQL Injection Engine{C.R}"),
+        ("6", f"{C.NEON_CYAN}Injection Pack{C.R}"),
+        ("7", f"{C.NEON_CYAN}Header / Tech Audit{C.R}"),
+        ("8", f"{C.NEON_CYAN}JavaScript Secret Hunter{C.R}"),
+        ("9", f"{C.NEON_CYAN}Directory Discovery{C.R}"),
+        ("10", f"{C.NEON_CYAN}Technology Detection{C.R}"),
         ("0", f"{C.DIM_GRAY}Back{C.R}"),
     ]))
-
 
 def osint_banner():
     clear()
-    art = (
-        f"{C.RED}{C.B}\n"
-        "  ██████╗ ███████╗██╗███╗   ██╗████████╗\n"
-        " ██╔═══██╗██╔════╝██║████╗  ██║╚══██╔══╝\n"
-        " ██║   ██║███████╗██║██╔██╗ ██║   ██║\n"
-        " ██║   ██║╚════██║██║██║╚██╗██║   ██║\n"
-        " ╚██████╔╝███████║██║██║ ╚████║   ██║\n"
-        "  ╚═════╝ ╚══════╝╚═╝╚═╝  ╚═══╝   ╚═╝\n"
-        f"{C.R}"
-    )
-    print(art)
-    print(f"{C.GOLD}{C.B}{'INTELLIGENCE GATHERING'.center(66)}{C.R}")
-    print(f"{C.DIM_GRAY}{'open source intelligence'.center(66)}{C.R}\n")
-
-    print(box_menu("SELECT MODULE", [
+    print(f"\n{C.NEON_PURPLE}{C.B}  OSINT & INTELLIGENCE{C.R}")
+    print(f"{C.DIM_GRAY}  Open-source information gathering{C.R}\n")
+    print(box_menu("MODULES", [
         ("1", f"{C.NEON_CYAN}Username Finder{C.R}"),
-        ("2", f"{C.CORNFLOWER}IP Intel{C.R}"),
-        ("3", f"{C.NEON_PURPLE}Metadata Extractor{C.R}"),
-        ("4", f"{C.YEL}Email Checker{C.R}"),
+        ("2", f"{C.NEON_CYAN}IP Intelligence{C.R}"),
+        ("3", f"{C.NEON_CYAN}Metadata Extractor{C.R}"),
+        ("4", f"{C.NEON_CYAN}Email Checker{C.R}"),
         ("0", f"{C.DIM_GRAY}Back{C.R}"),
     ]))
-
 
 def _safe(label, fn):
     try:
