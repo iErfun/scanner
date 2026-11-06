@@ -1,24 +1,16 @@
 name: Auto Build & Release
-
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
-
 permissions:
   contents: write
-
 concurrency:
   group: auto-release
-  cancel-in-progress: true   # cancel older runs when a new push lands
-
+  cancel-in-progress: true
 jobs:
   build:
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
-
     strategy:
       fail-fast: false
       matrix:
@@ -27,48 +19,38 @@ jobs:
             runner: windows-latest
             filename: XomScanner-Windows-64x.exe
             sep: ";"
-
           - platform: Linux-x64
             runner: ubuntu-latest
             filename: XomScanner-Linux-64x
             sep: ":"
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"          # cache pip downloads across runs
-
+          cache: "pip"
       - name: Install Linux build deps
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq build-essential libpcap-dev libffi-dev
-
       - name: Install Python packages
         run: |
           python -m pip install --upgrade pip wheel
           pip install pyinstaller
           pip install -r requirements.txt
-          # ensure runtime modules are present even if requirements is thin
           pip install cryptography PySocks requests urllib3 scapy faker paramiko
-
       - name: Build with PyInstaller (fast onefile)
         shell: bash
         run: |
           set -euo pipefail
-
-          # Collect data files if present (scapy needs its data)
           ADD_DATA=""
           if python -c "import scapy, pathlib; print(pathlib.Path(scapy.__file__).parent)" 2>/dev/null; then
             SCAPY_DIR=$(python -c "import scapy, pathlib; print(pathlib.Path(scapy.__file__).parent)")
             ADD_DATA="--add-data=${SCAPY_DIR}${{ matrix.sep }}scapy"
           fi
-
           pyinstaller \
             --noconfirm \
             --clean \
@@ -113,11 +95,8 @@ jobs:
             --exclude-module=PySide2 \
             $ADD_DATA \
             runner_code.py
-
-          # Normalize output path (PyInstaller puts binary in dist/)
           mkdir -p dist
           if [ ! -f "dist/${{ matrix.filename }}" ]; then
-            # Windows may strip .exe from --name when already present; find it
             FOUND=$(find dist -maxdepth 1 -type f \( -name 'XomScanner*' -o -name 'runner_code*' \) | head -1)
             if [ -n "$FOUND" ]; then
               mv "$FOUND" "dist/${{ matrix.filename }}"
@@ -125,7 +104,6 @@ jobs:
           fi
           ls -la dist/
           test -f "dist/${{ matrix.filename }}"
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -133,37 +111,31 @@ jobs:
           path: dist/${{ matrix.filename }}
           if-no-files-found: error
           retention-days: 14
-
   release:
     name: Create Automatic Release
     needs: build
     if: success()
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     permissions:
       contents: write
-
     steps:
       - name: Download all builds
         uses: actions/download-artifact@v4
         with:
           path: release
           merge-multiple: true
-
       - name: Generate Version
         id: version
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-
           LATEST_TAG=$(gh release list \
             --repo "$GITHUB_REPOSITORY" \
             --limit 1 \
             --json tagName \
             --jq '.[0].tagName // ""' || true)
-
           if [ -z "$LATEST_TAG" ]; then
             NEW_TAG="v1.0.8"
           else
@@ -179,10 +151,8 @@ jobs:
               NEW_TAG="v1.0.8"
             fi
           fi
-
           echo "tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
           echo "Next Release: $NEW_TAG"
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -191,14 +161,11 @@ jobs:
           target_commitish: ${{ github.sha }}
           body: |
             # XomScanner
-
             ## Downloads
             - **Windows x64:** `XomScanner-Windows-64x.exe`
             - **Linux x64:** `XomScanner-Linux-64x`
-
             ## Version
             `${{ steps.version.outputs.tag }}`
-
             ---
             Built with **PyInstaller** (fast CI) via GitHub Actions.
           files: release/*
