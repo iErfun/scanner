@@ -15,10 +15,10 @@ class C:
     R='\033[0m'; B='\033[1m'; D='\033[2m'
     RED='\033[91m'; GRN='\033[92m'; YEL='\033[93m'
     CYN='\033[96m'; WHT='\033[97m'
-    GLD='\033[38;2;255;215;0m'
-    PUR='\033[38;2;191;64;255m'
-    NEO='\033[38;2;0;255;213m'
-    CRM='\033[38;2;220;20;60m'
+    GLD='\033[38;2;239;190;112m'
+    PUR='\033[38;2;151;145;235m'
+    NEO='\033[38;2;82;190;255m'
+    CRM='\033[38;2;232;112;125m'
 
 
 def clear():
@@ -27,16 +27,9 @@ def clear():
 
 def banner():
     clear()
-    print(f"""{C.NEO}{C.B}
-▐██ ▐██████      ▐██ ▐██████ ▐██████ ▐██████ ▐██   
-▐██ ▐██ ▐██      ▐██ ▐██ ▐██   ▐██   ▐██     ▐██   
-▐██ ▐██████      ▐██ ▐██ ▐██   ▐██   ▐████   ▐██   
-▐██ ▐██          ▐██ ▐██ ▐██   ▐██   ▐██     ▐██   
-▐██ ▐██          ▐██ ▐██ ▐██   ▐██   ▐██████ ▐█████
-{C.R}""")
-    print(f"{C.GLD}{C.B}{'IP INTELLIGENCE GATHERING'.center(60)}{C.R}")
-    print(f"{C.D}{'powered by ip-api.com'.center(60)}{C.R}\n")
-
+    print(f"\n{C.NEO}{C.B}  XOMLSX  /  IP INTELLIGENCE{C.R}")
+    print(f"{C.GLD}  Network ownership  •  Geolocation  •  ASN details{C.R}")
+    print(f"{C.D}{'Powered by ip-api.com':>34}{C.R}\n")
 
 def lookup_ip(ip):
     """Fetch IP info from ip-api.com."""
