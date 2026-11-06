@@ -37,7 +37,6 @@ try:
     import injection_pack  # noqa: F401
     import sqli_engine  # noqa: F401
     import js_secrets  # noqa: F401
-    import port_scan  # noqa: F401
     import dir_brute  # noqa: F401
     import tech_detect  # noqa: F401
     import attacks_modern  # noqa: F401
@@ -150,8 +149,8 @@ def banner():
 
     print(box_menu("MAIN MENU", [
         ("1", f"{C.NEON_CYAN}Scanner{C.R}"),
-        ("2", f"{C.CRIMSON}Attack{C.R}"),
-        ("3", f"{C.GOLD}OSINT{C.R}   {C.DIM_GRAY}(javesi){C.R}"),
+        ("2", f"{C.NEON_CYAN}Attack{C.R}"),
+        ("3", f"{C.NEON_CYAN}OSINT{C.R}   {C.DIM_GRAY}(javesi){C.R}"),
         ("0", f"{C.DIM_GRAY}Exit{C.R}"),
     ]))
 
@@ -172,16 +171,16 @@ def attack_banner():
     print(f"{C.YEL}{C.B}{'ATTACK MODULES'.center(66)}{C.R}\n")
 
     print(box_menu("SELECT OPERATION", [
-        ("1", f"{C.NEON_CYAN}Bruteforce{C.R}"),
-        ("2", f"{C.CORNFLOWER}Wordlist Generator{C.R}"),
-        ("3", f"{C.NEON_PURPLE}XSS Scanner{C.R}"),
-        ("4", f"{C.CRIMSON}Modern Attacks{C.R}  {C.DIM_GRAY}(SSRF/SSTI/Log4j/JWT...){C.R}"),
-        ("5", f"{C.NEON_LIME}SQLi Engine{C.R}  {C.DIM_GRAY}(detect/extract/dump){C.R}"),
-        ("6", f"{C.YEL}Injection Pack{C.R}  {C.DIM_GRAY}(CMDi/XXE/CRLF){C.R}"),
+        ("1", f"{C.NEON_LIME}Bruteforce{C.R}"),
+        ("2", f"{C.NEON_LIME}Wordlist Generator{C.R}"),
+        ("3", f"{C.NEON_LIME}XSS Scanner{C.R}"),
+        ("4", f"{C.NEON_LIME}Modern Attacks{C.R}"),
+        ("5", f"{C.NEON_LIME}SQLi Engine{C.R}"),
+        ("6", f"{C.NEON_LIME}Injection Pack{C.R}"),
         ("7", f"{C.NEON_LIME}Header / Tech Audit{C.R}"),
-        ("8", f"{C.GOLD}JS Secret Hunter{C.R}"),
-        ("9", f"{C.CORNFLOWER}Dir Brute{C.R}"),
-        ("10", f"{C.NEON_PURPLE}Tech Detect{C.R}"),
+        ("8", f"{C.NEON_LIME}JS Secret Hunter{C.R}"),
+        ("9", f"{C.NEON_LIME}Dir Brute{C.R}"),
+        ("10", f"{C.NEON_LIME}Tech Detect{C.R}"),
         ("0", f"{C.DIM_GRAY}Back{C.R}"),
     ]))
 
@@ -189,7 +188,7 @@ def attack_banner():
 def osint_banner():
     clear()
     art = (
-        f"{C.GOLD}{C.B}\n"
+        f"{C.RED}{C.B}\n"
         "  ██████╗ ███████╗██╗███╗   ██╗████████╗\n"
         " ██╔═══██╗██╔════╝██║████╗  ██║╚══██╔══╝\n"
         " ██║   ██║███████╗██║██╔██╗ ██║   ██║\n"
