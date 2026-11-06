@@ -36,11 +36,11 @@ class WinColors:
     WHITE = '\033[97m'
     BOLD = '\033[1m'
     RESET = '\033[0m'
-    DIM_GRAY = '\033[38;2;110;110;120m'
-    NEON_CYAN = '\033[38;2;0;255;213m'
-    GOLD = '\033[38;2;255;215;0m'
-    CRIMSON = '\033[38;2;220;20;60m'
-    AQUA = '\033[38;2;0;255;255m'
+    DIM_GRAY = '\033[38;2;137;151;171m'
+    NEON_CYAN = '\033[38;2;82;190;255m'
+    GOLD = '\033[38;2;239;190;112m'
+    CRIMSON = '\033[38;2;232;112;125m'
+    AQUA = '\033[38;2;82;190;255m'
     ORANGE = '\033[38;2;255;165;0m'
 
 
@@ -91,23 +91,8 @@ OS_SIGNATURES = {
 
 def print_banner():
     os.system("clear" if os.name == "posix" else "cls")
-    print(WinColors.CRIMSON + r"""
-  ▄▄▄▄▄▄▄▄     ▄▄▄▄▄▄▄▄     ▄▄▄▄▄▄▄▄     ▄▄▄▄▄▄▄▄          ▄▄▄▄▄▄▄▄     ▄▄▄▄▄▄▄▄   ▄▄▄▄▄       
-▄▀▓▓▓▓▓▓▓▓▀▄ ▄▀▓▓▓▓▓▓▓▓▀▄ ▄▀▓▓▓▓▓▓▓▓▀▄ ▄▀▓▓▓▓▓▓▓▓▀▄      ▄▀▓▓▓▓▓▓▓▓▀▄ ▄▀▓▓▓▓▓▓▓▓▀▄ ▒▓▓▓▒       
-█░░░▒▀▀█░░░█ █░░░▒▀▀█░░░█ █░░░▒▀▀█░░░█ █░░░▒▀▀█░░░█      █░░░▒▀▀█░░░█ █░░░▒▀▀█░░░█ █░░░░       
-▓▒▒▒█▄▄▄▄▄   ▓▒▒▒█  █▒▒▒▓ ▓▒▒▒█▄▄█▒▒▒▓ ▓▒▒▒█  █▒▒▒▓      ▓▒▒▒█  █▒▒▒▓ ▓▒▒▒█▄▄█▒▒▒▓ ▓▒▒▒█       
-▀▀▓▓▓▓▓▓▓▓▄▄ ▒▓▓▓█        ▒▓▓▓▓▓▓▓▓▓▓▒ ▒▓▓▓█  █▓▓▓▒      ▒▓▓▓█  █▓▓▓▒ ▒▓▓▓▓▓▓▓▓▓▓▒ ▒▓▓▓█       
-  ▀▀▀▀▀█▓▓▓░ ░▓▓▓█  █▓▓▓░ ░▓▓▓█▀▀█▓▓▓░ ░▓▓▓█  █▓▓▓░      ░▓▓▓█  █▓▓▓░ ░▓▓▓█▀▀█▓▓▓░ ░▓▓▓█  █▓▓▓░
-▒▒▒▒█▄▄█▒▒▒▒ ▒▒▒▒█▄▄█▒▒▒▒ ▒▒▒▒█  █▒▒▒▒ ▒▒▒▒█  █▒▒▒▒      ▒▒▒▒█  █▒▒▒▒ ▒▒▒▒█  █▒▒▒▒ ▒▒▒▒█▄▄█▒▒▒▒
-▓░░░░░░░░░▄▀ ▀▄░░░░░░░░▄▀ ▓░░░█  █░░░▓ ▓░░░█  █░░░▓      ▓░░░█  █░░░▓ ▓░░░█  █░░░▓ ▀▄░░░░░░░░▄▀
-▀▀▀▀▀▀▀▀▀▀     ▀▀▀▀▀▀▀▀   ▀▀▀▀▀  ▀▀▀▀▀ ▀▀▀▀▀  ▀▀▀▀▀      ▀▀▀▀▀  ▀▀▀▀▀ ▀▀▀▀▀  ▀▀▀▀▀   ▀▀▀▀▀▀▀▀  
-
-""" + WinColors.RESET)
-    print(WinColors.DIM_GRAY + "-" * 70 + WinColors.RESET)
-    print(
-        WinColors.YELLOW + "[[+]] This is mainly on scan windows -- it also can scan NETWORK Device  " + WinColors.RESET)
-    print()
-
+    print(f"\n{WinColors.NEON_CYAN}{WinColors.BOLD}  XOMLSX  /  WINDOWS & SMB DISCOVERY{WinColors.RESET}")
+    print(f"{WinColors.DIM_GRAY}  Host fingerprinting  •  Network discovery  •  Reporting{WinColors.RESET}\n")
 
 def parse_build_number(os_string):
     if not os_string:
@@ -731,26 +716,29 @@ def run_batch_scan():
 def main_menu():
     if not HAS_SCAPY:
         print(f"{WinColors.RED}[!] scapy is required for Windows/SMB scanner{WinColors.RESET}")
-        print(f"{WinColors.DIM_GRAY}    pip install scapy{WinColors.RESET}")
+        print(f"{WinColors.DIM_GRAY}    Install with: pip install scapy{WinColors.RESET}")
         input(f"{WinColors.DIM_GRAY}\n[Press Enter to continue] {WinColors.RESET}")
         return
+    options = [
+        ("1", "SMB Fingerprint", "Build number and host details"),
+        ("2", "TCP Fingerprint", "TTL and TCP options"),
+        ("3", "Full Scan", "SMB + TCP + report"),
+        ("4", "Batch Scan", "Multiple targets"),
+        ("5", "Network Discovery", "Discover network devices"),
+        ("0", "Back", ""),
+    ]
     while True:
         print_banner()
-        print(
-            f"  {WinColors.GREEN}1){WinColors.RESET} SMB Fingerprint    {WinColors.DIM_GRAY}(Build Number){WinColors.RESET}")
-        print(
-            f"  {WinColors.GREEN}2){WinColors.RESET} TCP Fingerprint    {WinColors.DIM_GRAY}(TTL + Options){WinColors.RESET}")
-        print(
-            f"  {WinColors.GREEN}3){WinColors.RESET} Full Scan          {WinColors.DIM_GRAY}(SMB + TCP + Report){WinColors.RESET}")
-        print(
-            f"  {WinColors.GREEN}4){WinColors.RESET} Batch Scan         {WinColors.DIM_GRAY}(multiple IPs){WinColors.RESET}")
-        print(
-            f"  {WinColors.GREEN}5){WinColors.RESET} Network Discovery  {WinColors.DIM_GRAY}(find all devices){WinColors.RESET}")
-        print(f"  {WinColors.GREEN}0){WinColors.RESET} Exit")
-        print()
-
-        choice = input(WinColors.AQUA + "[?] Choose (0-5): " + WinColors.RESET).strip()
-
+        width = 66
+        print(f"{WinColors.NEON_CYAN}╭{'─' * width}╮{WinColors.RESET}")
+        print(f"{WinColors.NEON_CYAN}│{WinColors.RESET}  {WinColors.BOLD}SCAN WORKSPACE{WinColors.RESET}{' ' * (width - 17)}{WinColors.NEON_CYAN}│{WinColors.RESET}")
+        print(f"{WinColors.NEON_CYAN}├{'─' * width}┤{WinColors.RESET}")
+        for key, title, detail in options:
+            line = f"  {WinColors.GOLD}{key}{WinColors.RESET}  {title:<23} {WinColors.DIM_GRAY}{detail}{WinColors.RESET}"
+            plain = re.sub(r"\033\[[0-9;]*m", "", line)
+            print(f"{WinColors.NEON_CYAN}│{WinColors.RESET}{line}{' ' * max(width - len(plain), 0)}{WinColors.NEON_CYAN}│{WinColors.RESET}")
+        print(f"{WinColors.NEON_CYAN}╰{'─' * width}╯{WinColors.RESET}")
+        choice = input(f"\n{WinColors.NEON_CYAN}[?] Select (0-5): {WinColors.RESET}").strip()
         if choice == "1":
             run_smb_scan()
         elif choice == "2":
@@ -762,12 +750,11 @@ def main_menu():
         elif choice == "5":
             run_network_discovery()
         elif choice == "0":
-            print(WinColors.YELLOW + "[!] Bye" + WinColors.RESET)
+            print(f"{WinColors.DIM_GRAY}Returning...{WinColors.RESET}")
             return
         else:
-            print(WinColors.RED + "[!] Invalid option" + WinColors.RESET)
-            time.sleep(1)
-
+            print(f"{WinColors.RED}[!] Invalid option. Choose 0-5.{WinColors.RESET}")
+            time.sleep(0.8)
 
 if __name__ == "__main__":
     main_menu()
