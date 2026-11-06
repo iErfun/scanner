@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import List
 
-from core_utils import C, get, normalize_url, pause, save_json_report, session
+from core_utils import preflight_attack, C, get, normalize_url, pause, save_json_report, session
 
 FINGERPRINTS = [
     ("WordPress", re.compile(r"wp-content|wp-includes|wordpress", re.I)),
@@ -29,8 +29,8 @@ FINGERPRINTS = [
 ]
 
 
-def detect(url: str) -> dict:
-    s = session()
+def detect(url: str, proxies=None, headers=None) -> dict:
+    s = session(proxies=proxies, headers=headers)
     r = get(s, url, allow_redirects=True, timeout=12)
     if not r:
         return {"error": "no response"}
@@ -55,7 +55,8 @@ def run(url: str = None):
     if not url:
         pause()
         return
-    data = detect(url)
+    cfg = preflight_attack()
+    data = detect(url, proxies=cfg["proxies"], headers=cfg["headers"])
     if data.get("error"):
         print(f"{C.RED}[!] {data['error']}{C.R}")
         pause()
