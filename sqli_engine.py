@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 XOMLSX SQLi Engine — detection, fingerprint, extraction suite.
-Authorized / lab targets only.
 """
 from __future__ import annotations
 
@@ -44,11 +43,11 @@ except Exception:
         R = "\033[0m"; B = "\033[1m"; DIM = "\033[2m"
         RED = "\033[91m"; GREEN = "\033[92m"; YEL = "\033[93m"
         CYN = "\033[96m"; WHT = "\033[97m"
-        GOLD = "\033[38;2;255;215;0m"; NEON = "\033[38;2;0;255;213m"
-        PURP = "\033[38;2;191;64;255m"; GRAY = "\033[38;2;110;110;120m"
-        AQUA = "\033[38;2;0;255;213m"; CRIM = "\033[38;2;220;20;60m"
-        LIME = "\033[38;2;180;255;0m"
-        FRAME = "\033[38;2;139;92;246m"
+        GOLD = "\033[38;2;239;190;112m"; NEON = "\033[38;2;82;190;255m"
+        PURP = "\033[38;2;151;145;235m"; GRAY = "\033[38;2;137;151;171m"
+        AQUA = "\033[38;2;82;190;255m"; CRIM = "\033[38;2;232;112;125m"
+        LIME = "\033[38;2;111;204;166m"
+        FRAME = "\033[38;2;77;105;145m"
 
     def normalize_url(u: str) -> str:
         u = (u or "").strip()
@@ -91,14 +90,17 @@ def clear():
 
 
 def box(title: str, rows: List[Tuple[str, str]], width: int = 64) -> None:
-    print(f"{C.GOLD}+{'-' * width}+{C.R}")
+    inner = max(width - 2, 24)
+    edge = C.FRAME
+    print(f"{edge}╭{'─' * inner}╮{C.R}")
     if title:
-        print(f"{C.GOLD}|{C.R}  {C.B}{title}{C.R}")
-        print(f"{C.GOLD}+{'-' * width}+{C.R}")
-    for k, v in rows:
-        print(f"{C.GOLD}|{C.R}  {C.GOLD}{k}{C.R}  {v}")
-    print(f"{C.GOLD}+{'-' * width}+{C.R}")
-
+        label = f"  {C.B}{title}{C.R}"
+        print(f"{edge}│{C.R}{label}{' ' * max(inner - len(title) - 2, 0)}{edge}│{C.R}")
+        print(f"{edge}├{'─' * inner}┤{C.R}")
+    for key, value in rows:
+        plain = f"  {key}: {value}"
+        print(f"{edge}│{C.R}  {C.GOLD}{key}{C.R}  {value}{' ' * max(inner - len(plain) + len(key) + 2, 0)}{edge}│{C.R}")
+    print(f"{edge}╰{'─' * inner}╯{C.R}")
 
 def prompt(label: str, default: str = "") -> str:
     suf = f" {C.GRAY}[{default}]{C.R}" if default else ""
@@ -123,19 +125,8 @@ def status(msg: str, kind: str = "info") -> None:
 
 def banner():
     clear()
-    print(f"""
-{C.RED}{C.B}  ███████╗ ██████╗ ██╗     ██╗
-  ██╔════╝██╔═══██╗██║     ██║
-  ███████╗██║   ██║██║     ██║
-  ╚════██║██║▄▄ ██║██║     ██║
-  ███████║╚██████╔╝███████╗██║
-  ╚══════╝ ╚══▀▀═╝ ╚══════╝╚═╝{C.R}
-{C.GOLD}{C.B}     SQL Injection Engine  ·  detect · fingerprint · extract{C.R}
-{C.GRAY}     authorized / lab targets only{C.R}
-""")
-
-
-
+    print(f"\n{C.PURP}{C.B}  XOMLSX  /  SQL INJECTION ENGINE{C.R}")
+    print(f"{C.GRAY}  Detection  •  Fingerprinting  •  Validation{C.R}\n")
 
 # ── shared preflight: speed / proxy / fake IP / 10 browser profiles ───────────
 BROWSER_PROFILES = [
