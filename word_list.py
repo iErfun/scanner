@@ -19,16 +19,16 @@ class Colors:
     BOLD = '\033[1m'
     RESET = '\033[0m'
     ORANGE = '\033[38;2;255;165;0m'
-    DIM_GRAY = '\033[38;2;110;110;120m'
-    NEON_CYAN = '\033[38;2;0;255;213m'
-    NEON_PURPLE = '\033[38;2;191;64;255m'
+    DIM_GRAY = '\033[38;2;137;151;171m'
+    NEON_CYAN = '\033[38;2;82;190;255m'
+    NEON_PURPLE = '\033[38;2;151;145;235m'
     CORNFLOWER_BLUE = '\033[38;2;100;149;237m'
     SKY_BLUE = '\033[38;2;135;206;235m'
     FRAME = '\033[38;2;138;92;246m'
-    CRIMSON = '\033[38;2;220;20;60m'
-    AQUA = '\033[38;2;0;255;255m'
+    CRIMSON = '\033[38;2;232;112;125m'
+    AQUA = '\033[38;2;82;190;255m'
     TEAL = '\033[38;2;0;128;128m'
-    GOLD = '\033[38;2;255;215;0m'
+    GOLD = '\033[38;2;239;190;112m'
     DIM = '\033[2m'
 
 
@@ -296,34 +296,18 @@ def ask_mode():
 
 
 def banner():
-    art = r"""
- ██╗    ██╗ ██████╗ ██████╗ ██████╗ ██╗     ██╗███████╗████████╗
- ██║    ██║██╔═══██╗██╔══██╗██╔══██╗██║     ██║██╔════╝╚══██╔══╝
- ██║ █╗ ██║██║   ██║██████╔╝██║  ██║██║     ██║███████╗   ██║   
- ██║███╗██║██║   ██║██╔══██╗██║  ██║██║     ██║╚════██║   ██║   
- ╚███╔███╔╝╚██████╔╝██║  ██║██████╔╝███████╗██║███████║   ██║   
-  ╚══╝╚══╝  ╚═════╝ ╚═╝  ╚═╝╚═════╝ ╚══════╝╚═╝╚══════╝   ╚═╝   
-"""
-    print(f"{C.NEON_PURPLE}{C.BOLD}{art}{C.RESET}")
-    print(f"{C.NEON_CYAN}{C.BOLD}{'WORDLIST GENERATOR'.center(70)}{C.RESET}")
-    print(f"{C.DIM_GRAY}{'build custom wordlists from target info'.center(70)}{C.RESET}")
-    print()
-
+    print(f"\n{C.NEON_PURPLE}{C.BOLD}  XOMLSX  /  WORDLIST STUDIO{C.RESET}")
+    print(f"{C.DIM_GRAY}  Build structured, reusable wordlists{C.RESET}\n")
 
 def menu():
     width = 54
-    print(f"{C.FRAME}╔{'═' * width}╗{C.RESET}")
-    print(f"{C.FRAME}║{C.RESET}{pad(f'{C.NEON_CYAN}{C.BOLD}MODULE{C.RESET}', width, 'center')}{C.FRAME}║{C.RESET}")
-    print(f"{C.FRAME}╠{'═' * width}╣{C.RESET}")
-    for key, label, col in [
-        ("1", "Password List", C.NEON_CYAN),
-        ("2", "Username List", C.CORNFLOWER_BLUE),
-        ("0", "Exit", C.CRIMSON),
-    ]:
-        row = f"  {C.GOLD}{C.BOLD}{key}{C.RESET}  {col}{label}{C.RESET}"
-        print(f"{C.FRAME}║{C.RESET}{pad(row, width)}{C.FRAME}║{C.RESET}")
-    print(f"{C.FRAME}╚{'═' * width}╝{C.RESET}")
-
+    print(f"{C.FRAME}╭{'─' * width}╮{C.RESET}")
+    print(f"{C.FRAME}│{C.RESET}  {C.NEON_CYAN}{C.BOLD}GENERATOR TYPE{C.RESET}{' ' * (width - 17)}{C.FRAME}│{C.RESET}")
+    print(f"{C.FRAME}├{'─' * width}┤{C.RESET}")
+    for key, label in [("1", "Password Wordlist"), ("2", "Username Wordlist"), ("0", "Back")]:
+        row = f"  {C.GOLD}{C.BOLD}{key}{C.RESET}   {C.WHITE}{label}{C.RESET}"
+        print(f"{C.FRAME}│{C.RESET}{pad(row, width)}{C.FRAME}│{C.RESET}")
+    print(f"{C.FRAME}╰{'─' * width}╯{C.RESET}")
 
 def collect_personal_info():
     print(f"\n{C.NEON_PURPLE}{C.BOLD}--- target info ---{C.RESET}")
