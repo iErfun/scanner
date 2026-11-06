@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional, Set
 from urllib.parse import urljoin
 
-from core_utils import C, get, normalize_url, pause, root_of, save_json_report, session
+from core_utils import preflight_attack, C, get, normalize_url, pause, root_of, save_json_report, session
 
 DEFAULT_PATHS = [
     "admin", "administrator", "login", "wp-admin", "wp-login.php", "dashboard",
@@ -56,9 +56,10 @@ def run(url: str = None):
     base = root_of(url)
     wl = input(f"{C.AQUA}[?] Wordlist path (Enter=built-in): {C.R}").strip()
     paths = load_paths(wl or None)
-    threads = 30
+    cfg = preflight_attack()
+    threads = cfg["threads"]
     interesting = {200, 201, 204, 301, 302, 307, 401, 403, 405, 500}
-    s = session(timeout=8)
+    s = session(timeout=8, proxies=cfg["proxies"], headers=cfg["headers"])
     print(f"{C.GOLD}[*] {len(paths)} paths against {base} ...{C.R}")
     hits = []
     with ThreadPoolExecutor(max_workers=threads) as ex:
