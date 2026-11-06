@@ -14,7 +14,7 @@ requests.packages.urllib3.disable_warnings()
 OUT = "username_output"
 os.makedirs(OUT, exist_ok=True)
 
-
+# colors
 class C:
     R = '\033[0m';
     B = '\033[1m';
