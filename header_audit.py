@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Tuple
 
-from core_utils import C, get, normalize_url, pause, print_finding, save_json_report, session
+from core_utils import C, get, normalize_url, pause, preflight_attack, print_finding, save_json_report, session
 
 SECURITY_HEADERS = {
     "Strict-Transport-Security": ("high", "Missing HSTS"),
@@ -24,8 +24,8 @@ LEAK_HEADERS = [
 ]
 
 
-def audit(url: str) -> dict:
-    s = session(timeout=12)
+def audit(url: str, proxies=None, headers=None) -> dict:
+    s = session(timeout=12, proxies=proxies, headers=headers)
     r = get(s, url, allow_redirects=True, timeout=12)
     if not r:
         return {"error": "no response", "url": url}
@@ -61,8 +61,9 @@ def run(url: str = None):
     if not url:
         pause()
         return
+    cfg = preflight_attack()
     print(f"{C.GOLD}[*] Fetching {url} ...{C.R}")
-    data = audit(url)
+    data = audit(url, proxies=cfg["proxies"], headers=cfg["headers"])
     if data.get("error"):
         print(f"{C.RED}[!] {data['error']}{C.R}")
         pause()
