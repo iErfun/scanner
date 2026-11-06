@@ -87,24 +87,22 @@ class ProxyResult:
 
 
 def banner(title, width=62):
-    line = "=" * width
-    return f"\n{C.BRIGHT_CYAN}{line}{C.RESET}\n{C.BOLD}{C.BRIGHT_WHITE}  {title.center(width - 4)}{C.RESET}\n{C.BRIGHT_CYAN}{line}{C.RESET}"
-
+    title = str(title).strip()
+    inner = max(width - 2, len(title) + 4)
+    return (
+        f"\n{C.BRIGHT_CYAN}╭{'─' * inner}╮{C.RESET}\n"
+        f"{C.BRIGHT_CYAN}│{C.RESET}  {C.BOLD}{C.BRIGHT_WHITE}{title}{C.RESET}"
+        f"{' ' * max(inner - len(title) - 2, 0)}{C.BRIGHT_CYAN}│{C.RESET}\n"
+        f"{C.BRIGHT_CYAN}╰{'─' * inner}╯{C.RESET}"
+    )
 
 def divider(width=62):
     return f"{C.DIM}{'-' * width}{C.RESET}"
 
 
 def print_logo():
-    print(f"""{C.RED}
-  ██████╗ ██████╗  ██████╗ ██╗  ██╗██╗   ██╗    ████████╗███████╗███████╗████████╗███████╗██████╗
-  ██╔══██╗██╔══██╗██╔═══██╗╚██╗██╔╝╚██╗ ██╔╝   ╚══ ██╔══╝██╔════╝██╔════╝╚══██╔══╝██╔════╝██╔══██╗
-  ██████╔╝██████╔╝██║   ██║ ╚███╔╝  ╚████╔╝        ██║   █████╗  ███████╗   ██║   █████╗  ██████╔╝
-  ██╔═══╝ ██╔══██╗██║   ██║ ██╔██╗   ╚██╔╝         ██║   ██╔══╝  ╚════██║   ██║   ██╔══╝  ██╔══██╗
-  ██║     ██║  ██║╚██████╔╝██╔╝ ██╗   ██║          ██║   ███████╗███████║   ██║   ███████╗██║  ██║
-  ╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝   ╚═╝          ╚═╝   ╚══════╝╚══════╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
-                                                                      {C.RESET}""")
-
+    print(f"\n{C.BRIGHT_CYAN}{C.BOLD}  XOMLSX  /  PROXY WORKSPACE{C.RESET}")
+    print(f"{C.DIM}  Source management  •  Connectivity checks  •  Reports{C.RESET}\n")
 
 def parse_proxy_line(line):
     line = line.strip()
