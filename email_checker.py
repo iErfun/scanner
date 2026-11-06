@@ -33,33 +33,23 @@ def enable_colors_windows():
 
 
 def banner(title, width=55):
-    line = "=" * width
-    return f"\n{C.BRIGHT_CYAN}{line}{C.RESET}\n{C.BOLD}{C.BRIGHT_WHITE}  {title.center(width - 4)}{C.RESET}\n{C.BRIGHT_CYAN}{line}{C.RESET}"
-
+    title = str(title).strip()
+    edge = C.BRIGHT_CYAN
+    inner = max(width - 2, len(title) + 4)
+    return (
+        f"\n{edge}╭{'─' * inner}╮{C.RESET}\n"
+        f"{edge}│{C.RESET}  {C.BOLD}{C.BRIGHT_WHITE}{title}{C.RESET}"
+        f"{' ' * max(inner - len(title) - 2, 0)}{edge}│{C.RESET}\n"
+        f"{edge}╰{'─' * inner}╯{C.RESET}"
+    )
 
 def divider(width=55, char="-"):
     return f"{C.DIM}{char * width}{C.RESET}"
 
 
 def print_logo():
-    print(f"{C.DIM}{'-' * 130}{C.RESET}")
-    logo = r"""
-▀██▀▀▀▀███ ▀███      ███▀       ███       ▀██▀ ▀██▀              ▄██▀██▄█       ▄▄█████▄█       ███       ▀██   ▀██▀
- ██     ██  ███▌    ▐███       ▐███▌       ██   ██              ██▀   ███    ▄██▀▀   ▀███      ▐███▌       ██▌   ██
- ██      █  ████    ████       █▌███       ██   ██             ▐█▌     ██   ██▀        ▀█      █▌███       ███   ██
- ██         ████▌  ▐█ ██      ▐█▌▐██▌      ██   ██             ██▌      █  ▐█▌                ▐█▌▐██▌      ███▌  ██
- ██   ▄█    ██▐██  █▌ ██      ██  ███      ██   ██              ▀█▄▄       ██                 ██  ███      ████  ██
- ███████    ██ ██▌▐█  ██     ▐█▌  ▐██▌     ██   ██                ▀▀▀▀██▄  ██                ▐█▌  ▐██▌     ██▐█▌ ██
- ██   ▀█    ██ ▐███▌  ██     ██    ███     ██   ██                     ▀█▌ ██                ██    ███     ██ ██ ██
- ██         ██  ███   ██    ▐█▌    ▐██▌    ██   ██             ▄        ██ ▐█▌              ▐█▌    ▐██▌    ██ ▐█▌██
- ██     ▄█  ██  ▐█▌   ██    ██▄▄▄▄▄▄███    ██   ██     ▄█      █▄      ▐█▌  ██▄         ▄   ██▄▄▄▄▄▄███    ██  ████
- ██    ▄██  ██   █    ██   ▐█▌      ▐██▌   ██   ██    ▄██      ███    ▄██    ▀██▄▄    ▄██  ▐█▌      ▐██▌   ██  ▐███
-▄██▄▄▄████ ▄██▄      ▄██▄ ▄██▄      ▄███▄ ▄██▄ ▄██▄▄▄████      ████▄▄██▀       ▀▀██████▀  ▄██▄      ▄███▄ ▄██▄  ███
-
-"""
-    print(f"{C.BRIGHT_CYAN}{logo}{C.RESET}")
-    print(f"{C.DIM}{'-' * 1}{C.RESET}")
-
+    print(f"\n{C.BRIGHT_CYAN}{C.BOLD}  XOMLSX  /  EMAIL INTELLIGENCE{C.RESET}")
+    print(f"{C.DIM}  Domain and mailbox verification workflow{C.RESET}\n")
 
 @dataclass
 class SiteTarget:
