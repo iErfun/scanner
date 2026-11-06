@@ -11,6 +11,7 @@ from core_utils import (
     get,
     normalize_url,
     pause,
+    preflight_attack,
     print_finding,
     save_json_report,
     session,
@@ -61,7 +62,8 @@ def run(url: str = None):
     if not url:
         pause()
         return
-    s = session()
+    cfg = preflight_attack()
+    s = session(proxies=cfg["proxies"], headers=cfg["headers"])
     r = get(s, url, allow_redirects=True, timeout=12)
     if not r:
         print(f"{C.RED}[!] no response{C.R}")
