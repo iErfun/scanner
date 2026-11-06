@@ -15,6 +15,7 @@ import re
 import socket
 import string
 import time
+import threading
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -53,15 +54,19 @@ class C:
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
-def _session(proxies: Optional[dict] = None, timeout: float = 8.0) -> "requests.Session":
+def _session(proxies: Optional[dict] = None, timeout: float = 8.0,
+             extra_headers: Optional[dict] = None) -> "requests.Session":
     s = requests.Session()
     s.verify = False
-    s.headers.update({
+    base = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept": "*/*",
         "Accept-Language": "en-US,en;q=0.9",
-    })
+    }
+    if extra_headers:
+        base.update(extra_headers)
+    s.headers.update(base)
     if proxies:
         s.proxies.update(proxies)
     s.timeout = timeout
@@ -860,54 +865,420 @@ def save_report(results: Dict[str, List[dict]], url: str, path: Optional[str] = 
     return path
 
 
+
+# ── preflight selectors (speed / connection / profiles) ───────────────────────
+BROWSER_PROFILES = [
+    {
+        "name": "Chrome 122 Win10",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Sec-Ch-Ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
+    },
+    {
+        "name": "Chrome 120 macOS",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"macOS"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Upgrade-Insecure-Requests": "1",
+    },
+    {
+        "name": "Firefox 122 Win10",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+    },
+    {
+        "name": "Firefox 121 Linux",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Upgrade-Insecure-Requests": "1",
+    },
+    {
+        "name": "Safari 17 macOS",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_2) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+    },
+    {
+        "name": "Edge 122 Win11",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Sec-Ch-Ua": '"Not(A:Brand";v="24", "Chromium";v="122", "Microsoft Edge";v="122"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Upgrade-Insecure-Requests": "1",
+    },
+    {
+        "name": "Chrome 121 Android",
+        "User-Agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.6167.178 Mobile Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Sec-Ch-Ua-Mobile": "?1",
+        "Sec-Ch-Ua-Platform": '"Android"',
+        "Upgrade-Insecure-Requests": "1",
+    },
+    {
+        "name": "Safari iOS 17",
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+    },
+    {
+        "name": "Chrome 119 Win11",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-GB,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Sec-Ch-Ua": '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Upgrade-Insecure-Requests": "1",
+    },
+    {
+        "name": "Opera 106 Win10",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OPR/106.0.0.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Upgrade-Insecure-Requests": "1",
+    },
+]
+
+
+def _box_top(width=56):
+    print(f"{C.FRAME}{C.B}┌{'─' * width}┐{C.R}")
+
+
+def _box_line(text, width=56):
+    pad = width - len(text)
+    if pad < 0:
+        text = text[:width]
+        pad = 0
+    print(f"{C.FRAME}{C.B}│{C.R} {text}{' ' * pad}{C.FRAME}{C.B}│{C.R}")
+
+
+def _box_mid(width=56):
+    print(f"{C.FRAME}{C.B}├{'─' * width}┤{C.R}")
+
+
+def _box_bottom(width=56):
+    print(f"{C.FRAME}{C.B}└{'─' * width}┘{C.R}")
+
+
+def select_scan_speed():
+    print()
+    _box_top(54)
+    _box_line("SELECT SCAN SPEED", 54)
+    _box_mid(54)
+    _box_line(" 1)  Super Slow     delay 1.00s   threads 2", 54)
+    _box_line(" 2)  Slow           delay 0.50s   threads 4", 54)
+    _box_line(" 3)  Normal         delay 0.20s   threads 8", 54)
+    _box_line(" 4)  Fast           delay 0.05s   threads 16", 54)
+    _box_line(" 5)  Super Fast     delay 0.01s   threads 32", 54)
+    _box_line(" 6)  Custom         manual delay + threads", 54)
+    _box_bottom(54)
+    print()
+    choice = input(f"{C.AQUA}[?] Choose speed (1-6): {C.R}").strip()
+    table = {
+        "1": (1.00, 2, "Super Slow"),
+        "2": (0.50, 4, "Slow"),
+        "3": (0.20, 8, "Normal"),
+        "4": (0.05, 16, "Fast"),
+        "5": (0.01, 32, "Super Fast"),
+    }
+    if choice == "6":
+        try:
+            delay = float(input(f"{C.AQUA}[?] Delay seconds (e.g. 0.15): {C.R}").strip() or "0.2")
+        except ValueError:
+            delay = 0.2
+        try:
+            threads = int(input(f"{C.AQUA}[?] Threads (e.g. 10): {C.R}").strip() or "8")
+        except ValueError:
+            threads = 8
+        threads = max(1, min(64, threads))
+        delay = max(0.0, delay)
+        label = f"Custom ({threads}t, {delay}s)"
+    else:
+        delay, threads, label = table.get(choice, (0.20, 8, "Normal"))
+    print(f"  {C.GREEN}[+]{C.R} Speed: {C.B}{label}{C.R}  delay={delay}s  threads={threads}")
+    return delay, threads, label
+
+
+def _load_proxy_list():
+    """Paste proxies or load from file. Returns list of proxy URL strings."""
+    print(f"  {C.GRAY}Paste proxies (one per line), or path to a .txt file.{C.R}")
+    print(f"  {C.GRAY}Empty line ends paste mode.{C.R}")
+    first = input(f"{C.AQUA}[?] Proxy / file path: {C.R}").strip()
+    if not first:
+        return []
+    # file path?
+    if os.path.isfile(first):
+        try:
+            with open(first, "r", encoding="utf-8", errors="ignore") as f:
+                lines = [ln.strip() for ln in f if ln.strip() and not ln.strip().startswith("#")]
+            print(f"  {C.GREEN}[+]{C.R} Loaded {len(lines)} proxy(ies) from file")
+            return lines
+        except Exception as e:
+            print(f"  {C.YEL}[!] file read error: {e}{C.R}")
+            return []
+    # single proxy or start of paste
+    proxies = [first]
+    while True:
+        line = input(f"{C.AQUA}[?] +proxy (empty to finish): {C.R}").strip()
+        if not line:
+            break
+        proxies.append(line)
+    print(f"  {C.GREEN}[+]{C.R} {len(proxies)} proxy(ies) ready")
+    return proxies
+
+
+def select_connection_mode():
+    """Returns (proxies_dict_or_None, extra_headers, mode_label, proxy_list)"""
+    print()
+    _box_top(54)
+    _box_line("SELECT CONNECTION / IP MODE", 54)
+    _box_mid(54)
+    _box_line(" 1)  Own IP            direct, no proxy", 54)
+    _box_line(" 2)  Custom Proxy      paste list or file", 54)
+    _box_line(" 3)  Fake IP + UA      faker headers, direct", 54)
+    _box_line(" 4)  Proxy + Fake IP   proxy list + faker", 54)
+    _box_bottom(54)
+    print()
+    choice = input(f"{C.AQUA}[?] Choose mode (1-4): {C.R}").strip()
+
+    proxies = None
+    proxy_list = []
+    extra = {}
+    label = "Own IP"
+
+    if choice in ("2", "4"):
+        proxy_list = _load_proxy_list()
+        if proxy_list:
+            # primary dict for session; rotation handled by caller if needed
+            p0 = proxy_list[0]
+            proxies = {"http": p0, "https": p0}
+            label = f"Proxy x{len(proxy_list)}"
+        else:
+            label = "Own IP (no proxy given)"
+
+    if choice in ("3", "4"):
+        try:
+            from faker import Faker
+            fake = Faker()
+            ip = fake.ipv4_public()
+            extra.update({
+                "X-Forwarded-For": ip,
+                "X-Real-IP": ip,
+                "X-Client-IP": ip,
+                "CF-Connecting-IP": ip,
+                "True-Client-IP": ip,
+                "Forwarded": f"for={ip};proto=https",
+            })
+            label = (label + " + FakeIP") if choice == "4" else f"Fake IP ({ip})"
+            print(f"  {C.GREEN}[+]{C.R} Spoofed IP headers → {C.B}{ip}{C.R}")
+        except Exception as e:
+            print(f"  {C.YEL}[!] faker unavailable ({e}), continuing without fake IP{C.R}")
+
+    # always attach a real browser profile
+    profile = random.choice(BROWSER_PROFILES)
+    for k, v in profile.items():
+        if k != "name":
+            extra[k] = v
+    print(f"  {C.GREEN}[+]{C.R} Browser profile → {C.B}{profile['name']}{C.R}")
+    print(f"  {C.GREEN}[+]{C.R} Mode: {C.B}{label}{C.R}")
+    return proxies, extra, label, proxy_list
+
+
+def select_browser_profile():
+    print()
+    _box_top(54)
+    _box_line("SELECT BROWSER PROFILE (10 real)", 54)
+    _box_bottom(54)
+    for i, p in enumerate(BROWSER_PROFILES, 1):
+        print(f"  {C.GREEN}{i:2}){C.R} {p['name']}")
+    print(f"  {C.GREEN} 0){C.R} Random")
+    print()
+    ch = input(f"{C.AQUA}[?] Choose profile (0-10): {C.R}").strip()
+    if ch.isdigit() and 1 <= int(ch) <= 10:
+        profile = BROWSER_PROFILES[int(ch) - 1]
+    else:
+        profile = random.choice(BROWSER_PROFILES)
+    headers = {k: v for k, v in profile.items() if k != "name"}
+    print(f"  {C.GREEN}[+]{C.R} Using: {C.B}{profile['name']}{C.R}")
+    return headers, profile["name"]
+
+
+def preflight():
+    """Common preflight for every modern attack option.
+    Returns (proxies, extra_headers, delay, threads, speed_label, mode_label, proxy_list)
+    """
+    delay, threads, speed_label = select_scan_speed()
+    proxies, extra, mode_label, proxy_list = select_connection_mode()
+    # if user wants explicit profile override
+    print()
+    override = input(f"{C.AQUA}[?] Pick specific browser profile? [y/N]: {C.R}").strip().lower()
+    if override in ("y", "yes"):
+        prof_headers, pname = select_browser_profile()
+        extra.update(prof_headers)
+    return proxies, extra, delay, threads, speed_label, mode_label, proxy_list
+
+
+def _apply_session_patch(proxies, extra_headers):
+    """Monkey-patch module-level _session to inject headers for this run."""
+    original = _session
+
+    def wrapped(proxies_arg=None, timeout=8.0, extra_headers_arg=None):
+        # merge: preflight headers win unless caller overrides
+        merged = dict(extra_headers or {})
+        if extra_headers_arg:
+            merged.update(extra_headers_arg)
+        return original(proxies_arg if proxies_arg is not None else proxies,
+                        timeout, merged)
+
+    return wrapped
+
+
 # ── interactive runners (match scanner.py style) ─────────────────────────────
+
 def _ask_url() -> str:
+    print()
+    _box_top(54)
+    _box_line("TARGET", 54)
+    _box_bottom(54)
     url = input(f"{C.AQUA}[?] Target URL (with params if any): {C.R}").strip()
     if not url.startswith("http"):
         url = "http://" + url
     return url
 
 
-def run_ssrf_scanner():
-    print(f"\n{C.PURP}{C.B}  SSRF + Cloud Metadata Scanner{C.R}\n")
+def _print_run_header(title: str) -> None:
+    print()
+    _box_top(54)
+    _box_line(title[:52], 54)
+    _box_bottom(54)
+
+
+def _print_run_summary(speed_label, mode_label, delay, threads, proxy=None) -> None:
+    print()
+    _box_top(54)
+    _box_line("RUN CONFIG", 54)
+    _box_mid(54)
+    _box_line(f"speed   : {speed_label}", 54)
+    _box_line(f"mode    : {mode_label}", 54)
+    _box_line(f"delay   : {delay}s", 54)
+    _box_line(f"threads : {threads}", 54)
+    if proxy:
+        _box_line(f"proxy   : {str(proxy)[:48]}", 54)
+    _box_bottom(54)
+    print()
+
+
+def _run_with_preflight(title: str, probe_fn, needs_oast: bool = False, pass_threads: bool = False):
+    _print_run_header(title)
     url = _ask_url()
-    findings = probe_ssrf(url)
-    if not findings:
-        print(f"{C.GREEN}[+] No SSRF indicators{C.R}")
+    proxies, extra, delay, threads, speed_label, mode_label, proxy_list = preflight()
+    active_proxy = None
+    if proxy_list:
+        p = random.choice(proxy_list) if len(proxy_list) > 1 else proxy_list[0]
+        proxies = {"http": p, "https": p}
+        active_proxy = p
+    _print_run_summary(speed_label, mode_label, delay, threads, active_proxy)
+
+    global _session
+    _orig = _session
+    _session = _apply_session_patch(proxies, extra)
+    try:
+        if needs_oast:
+            oast = input(f"{C.AQUA}[?] OAST / collaborator host (default oast.example): {C.R}").strip() or "oast.example"
+            findings = probe_fn(url, oast, proxies=proxies, delay=delay)
+        else:
+            kwargs = {"proxies": proxies, "delay": delay}
+            if pass_threads:
+                try:
+                    findings = probe_fn(url, proxies=proxies, delay=delay, threads=threads)
+                except TypeError:
+                    try:
+                        findings = probe_fn(url, proxies=proxies, delay=delay)
+                    except TypeError:
+                        findings = probe_fn(url, proxies=proxies)
+            else:
+                try:
+                    findings = probe_fn(url, proxies=proxies, delay=delay)
+                except TypeError:
+                    findings = probe_fn(url, proxies=proxies)
+        if not findings:
+            print(f"{C.GREEN}[+] No indicators found{C.R}")
+        else:
+            print(f"{C.CRIM}[!] {len(findings)} finding(s){C.R}")
+    finally:
+        _session = _orig
     input(f"\n{C.GRAY}[Press Enter]{C.R}")
+
+
+def run_ssrf_scanner():
+    _run_with_preflight("1) SSRF + Cloud IMDS", probe_ssrf)
 
 
 def run_ssti_scanner():
-    print(f"\n{C.PURP}{C.B}  SSTI Scanner{C.R}\n")
-    url = _ask_url()
-    findings = probe_ssti(url)
-    if not findings:
-        print(f"{C.GREEN}[+] No SSTI indicators{C.R}")
-    input(f"\n{C.GRAY}[Press Enter]{C.R}")
+    _run_with_preflight("2) SSTI (Jinja/Twig/Freemarker/EL)", probe_ssti)
 
 
 def run_log4shell_scanner():
-    print(f"\n{C.PURP}{C.B}  Log4Shell / JNDI Emitter{C.R}\n")
-    url = _ask_url()
-    oast = input(f"{C.AQUA}[?] OAST / collaborator host (default oast.example): {C.R}").strip() or "oast.example"
-    probe_log4shell(url, oast)
-    input(f"\n{C.GRAY}[Press Enter]{C.R}")
+    _run_with_preflight("3) Log4Shell / JNDI emitter", probe_log4shell, needs_oast=True)
 
 
 def run_traversal_scanner():
-    print(f"\n{C.PURP}{C.B}  Advanced Traversal / LFI-Wrapper{C.R}\n")
-    url = _ask_url()
-    findings = probe_traversal(url)
-    if not findings:
-        print(f"{C.GREEN}[+] No traversal indicators{C.R}")
-    input(f"\n{C.GRAY}[Press Enter]{C.R}")
+    _run_with_preflight("4) Advanced Path Traversal / LFI", probe_traversal)
 
 
 def run_full_modern_scan():
-    print(f"\n{C.PURP}{C.B}  FULL MODERN WEB ATTACK SURFACE{C.R}\n")
+    _print_run_header("12) FULL modern surface scan")
     url = _ask_url()
+    proxies, extra, delay, threads, speed_label, mode_label, proxy_list = preflight()
+    active_proxy = None
+    if proxy_list:
+        p = random.choice(proxy_list) if len(proxy_list) > 1 else proxy_list[0]
+        proxies = {"http": p, "https": p}
+        active_proxy = p
     oast = input(f"{C.AQUA}[?] OAST host for Log4Shell (default oast.example): {C.R}").strip() or "oast.example"
-    results = run_modern_scan(url, oast=oast)
+    _print_run_summary(speed_label, mode_label, delay, threads, active_proxy)
+
+    global _session
+    _orig = _session
+    _session = _apply_session_patch(proxies, extra)
+    try:
+        results = run_modern_scan(url, proxies=proxies, delay=delay, oast=oast)
+    finally:
+        _session = _orig
     save = input(f"\n{C.AQUA}[?] Save report? [y/n]: {C.R}").strip().lower()
     if save == "y":
         path = save_report(results, url)
@@ -918,24 +1289,26 @@ def run_full_modern_scan():
 def show_modern_menu():
     while True:
         print()
-        print(f"{C.FRAME}{C.B}┌{'─' * 52}┐{C.R}")
-        print(f"{C.FRAME}{C.B}│{C.R}  {C.NEON}{C.B}MODERN ATTACK MODULES{C.R}{' ' * 30}{C.FRAME}{C.B}│{C.R}")
-        print(f"{C.FRAME}{C.B}└{'─' * 52}┘{C.R}")
-        print(f"  {C.GREEN}1){C.R} SSRF + Cloud IMDS")
-        print(f"  {C.GREEN}2){C.R} SSTI (Jinja/Twig/Freemarker/EL)")
-        print(f"  {C.GREEN}3){C.R} Log4Shell / JNDI emitter")
-        print(f"  {C.GREEN}4){C.R} Advanced Path Traversal / LFI wrappers")
-        print(f"  {C.GREEN}5){C.R} Open Redirect")
-        print(f"  {C.GREEN}6){C.R} CORS misconfiguration")
-        print(f"  {C.GREEN}7){C.R} Host Header Injection")
-        print(f"  {C.GREEN}8){C.R} GraphQL Introspection")
-        print(f"  {C.GREEN}9){C.R} JWT surface / none-alg")
-        print(f"  {C.GREEN}10){C.R} Actuator / .env / secrets / .git")
-        print(f"  {C.GREEN}11){C.R} HTTP Request Smuggling (light)")
-        print(f"  {C.GREEN}12){C.R} FULL modern surface scan")
-        print(f"  {C.CYN}0){C.R} Back")
+        _box_top(54)
+        _box_line("MODERN ATTACK MODULES", 54)
+        _box_mid(54)
+        _box_line(" 1)  SSRF + Cloud IMDS", 54)
+        _box_line(" 2)  SSTI (Jinja / Twig / Freemarker / EL)", 54)
+        _box_line(" 3)  Log4Shell / JNDI emitter", 54)
+        _box_line(" 4)  Advanced Path Traversal / LFI", 54)
+        _box_line(" 5)  Open Redirect", 54)
+        _box_line(" 6)  CORS misconfiguration", 54)
+        _box_line(" 7)  Host Header Injection", 54)
+        _box_line(" 8)  GraphQL Introspection", 54)
+        _box_line(" 9)  JWT surface / none-alg", 54)
+        _box_line("10)  Actuator / .env / secrets / .git", 54)
+        _box_line("11)  HTTP Request Smuggling (light)", 54)
+        _box_line("12)  FULL modern surface scan", 54)
+        _box_mid(54)
+        _box_line(" 0)  Back", 54)
+        _box_bottom(54)
         print()
-        ch = input(f"{C.AQUA}[?] Choose: {C.R}").strip()
+        ch = input(f"{C.AQUA}[?] Choose (0-12): {C.R}").strip()
         if ch == "1":
             run_ssrf_scanner()
         elif ch == "2":
@@ -945,33 +1318,19 @@ def show_modern_menu():
         elif ch == "4":
             run_traversal_scanner()
         elif ch == "5":
-            url = _ask_url()
-            probe_open_redirect(url)
-            input(f"\n{C.GRAY}[Press Enter]{C.R}")
+            _run_with_preflight("5) Open Redirect", probe_open_redirect)
         elif ch == "6":
-            url = _ask_url()
-            probe_cors(url)
-            input(f"\n{C.GRAY}[Press Enter]{C.R}")
+            _run_with_preflight("6) CORS misconfiguration", probe_cors)
         elif ch == "7":
-            url = _ask_url()
-            probe_host_header(url)
-            input(f"\n{C.GRAY}[Press Enter]{C.R}")
+            _run_with_preflight("7) Host Header Injection", probe_host_header)
         elif ch == "8":
-            url = _ask_url()
-            probe_graphql(url)
-            input(f"\n{C.GRAY}[Press Enter]{C.R}")
+            _run_with_preflight("8) GraphQL Introspection", probe_graphql)
         elif ch == "9":
-            url = _ask_url()
-            probe_jwt(url)
-            input(f"\n{C.GRAY}[Press Enter]{C.R}")
+            _run_with_preflight("9) JWT surface / none-alg", probe_jwt)
         elif ch == "10":
-            url = _ask_url()
-            probe_secrets_and_actuators(url)
-            input(f"\n{C.GRAY}[Press Enter]{C.R}")
+            _run_with_preflight("10) Actuator / .env / secrets", probe_secrets_and_actuators, pass_threads=True)
         elif ch == "11":
-            url = _ask_url()
-            probe_smuggling(url)
-            input(f"\n{C.GRAY}[Press Enter]{C.R}")
+            _run_with_preflight("11) HTTP Request Smuggling", probe_smuggling)
         elif ch == "12":
             run_full_modern_scan()
         elif ch in ("0", "b", "q"):
