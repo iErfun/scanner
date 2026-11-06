@@ -43,12 +43,12 @@ class C:
     CYAN   = '\033[96m'
     MAG    = '\033[95m'
     WHITE  = '\033[97m'
-    GOLD   = '\033[38;2;255;215;0m'
+    GOLD   = '\033[38;2;239;190;112m'
     ORANGE = '\033[38;2;255;165;0m'
-    PURPLE = '\033[38;2;191;64;255m'
-    NEON   = '\033[38;2;0;255;213m'
-    CRIM   = '\033[38;2;220;20;60m'
-    AQUA   = '\033[38;2;0;255;255m'
+    PURPLE = '\033[38;2;151;145;235m'
+    NEON   = '\033[38;2;82;190;255m'
+    CRIM   = '\033[38;2;232;112;125m'
+    AQUA   = '\033[38;2;82;190;255m'
 
 
 ANSI_RE = re.compile(r'\033\[[0-9;]*m')
@@ -482,37 +482,25 @@ class BruteForcer:
         return self.found, elapsed, self.attempts
 
 def banner():
-    art = """▀█████████▄     ▄████████ ███    █▄      ███        ▄████████         ▄████████  ▄██████▄     ▄████████  ▄████████    ▄████████ 
-  ███    ███   ███    ███ ███    ███ ▀█████████▄   ███    ███        ███    ███ ███    ███   ███    ███ ███    ███   ███    ███ 
-  ███    ███   ███    ███ ███    ███    ▀███▀▀██   ███    █▀         ███    █▀  ███    ███   ███    ███ ███    █▀    ███    █▀  
- ▄███▄▄▄██▀   ▄███▄▄▄▄██▀ ███    ███     ███   ▀  ▄███▄▄▄           ▄███▄▄▄     ███    ███  ▄███▄▄▄▄██▀ ███         ▄███▄▄▄     
-▀▀███▀▀▀██▄  ▀▀███▀▀▀▀▀   ███    ███     ███     ▀▀███▀▀▀          ▀▀███▀▀▀     ███    ███ ▀▀███▀▀▀▀▀   ███        ▀▀███▀▀▀     
-  ███    ██▄ ▀███████████ ███    ███     ███       ███    █▄         ███        ███    ███ ▀███████████ ███    █▄    ███    █▄  
-  ███    ███   ███    ███ ███    ███     ███       ███    ███        ███        ███    ███   ███    ███ ███    ███   ███    ███ 
-▄█████████▀    ███    ███ ████████▀     ▄████▀     ██████████        ███         ▀██████▀    ███    ███ ████████▀    ██████████ 
-               ███    ███                                                                    ███    ███                         """
-    print(f"{C.RED}{C.B}{art}{C.R}")
-    print(f"{C.NEON}{C.B}{'BRUTE FORCE TOOLKIT'.center(66)}{C.R}")
-    print()
+    print(f"\n{C.PURPLE}{C.B}  XOMLSX  /  AUTHENTICATION AUDIT{C.R}")
+    print(f"{C.DIM}  HTTP Basic  •  Form Login  •  SSH  •  FTP{C.R}\n")
 
 
 def menu():
-    w = 50
-    print(f"{C.PURPLE}+{'-' * w}+{C.R}")
-    print(f"{C.PURPLE}|{C.R}{pad(f'{C.NEON}{C.B}TARGET TYPE{C.R}', w, 'center')}{C.PURPLE}|{C.R}")
-    print(f"{C.PURPLE}+{'-' * w}+{C.R}")
-    items = [
-        ("1", "HTTP Basic Auth", C.NEON),
-        ("2", "HTTP Form Login", C.BLUE),
-        ("3", "SSH", C.PURPLE),
-        ("4", "FTP", C.AQUA),
-        ("0", "Exit", C.CRIM),
-    ]
-    for k, label, col in items:
-        row = f"  {C.GOLD}{C.B}{k}{C.R}  {col}{label}{C.R}"
-        print(f"{C.PURPLE}|{C.R}{pad(row, w)}{C.PURPLE}|{C.R}")
-    print(f"{C.PURPLE}+{'-' * w}+{C.R}")
-
+    width = 54
+    print(f"{C.PURPLE}╭{'─' * width}╮{C.R}")
+    print(f"{C.PURPLE}│{C.R}  {C.B}{C.WHITE}SELECT PROTOCOL{C.R}{' ' * (width - 17)}{C.PURPLE}│{C.R}")
+    print(f"{C.PURPLE}├{'─' * width}┤{C.R}")
+    for key, label in [
+        ("1", "HTTP Basic Authentication"),
+        ("2", "HTTP Form Authentication"),
+        ("3", "SSH"),
+        ("4", "FTP"),
+        ("0", "Back"),
+    ]:
+        row = f"  {C.GOLD}{C.B}{key}{C.R}   {C.WHITE}{label}{C.R}"
+        print(f"{C.PURPLE}│{C.R}{pad(row, width)}{C.PURPLE}│{C.R}")
+    print(f"{C.PURPLE}╰{'─' * width}╯{C.R}")
 
 def show_summary(found, elapsed, attempts, target, proxy_count=0,
                  lockout=False, mode="unknown"):
