@@ -3091,9 +3091,9 @@ def show_web_menu():
         box_line("2) SQL Injection Scanner", text_color=Colors.SKY_BLUE)
         box_line("3) XSS Scanner", text_color=Colors.SKY_BLUE)
         box_line("4) LFI Scanner", text_color=Colors.SKY_BLUE)
-        box_line("5) Modern Modules  ·  SSRF SSTI Log4j JWT CORS …", text_color=Colors.NEON_PURPLE + Colors.BOLD)
-        box_line("6) Full Modern Scan  ·  live progress all stages", text_color=Colors.NEON_CYAN + Colors.BOLD)
-        box_line("7) Back", text_color=Colors.DIM_GRAY)
+        box_line("5) Modern Modules", text_color=Colors.NEON_PURPLE + Colors.BOLD)
+        box_line("6) Full Modern Scan", text_color=Colors.NEON_CYAN + Colors.BOLD)
+        box_line("0) Back", text_color=Colors.DIM_GRAY)
         box_bottom()
 
         choice = typed_input(Colors.AQUA + "[?] Choose (1-7): " + Colors.RESET).strip()
@@ -3109,7 +3109,7 @@ def show_web_menu():
             return "5"
         elif choice == "6":
             return "6"
-        elif choice in ("7", "0"):
+        elif choice in ("7", "0", "b"):
             return "0"
         else:
             print(Colors.RED + "[!] Invalid option." + Colors.RESET)
@@ -3128,7 +3128,7 @@ def main():
         print(f"{Colors.DIM_GRAY}    Install: pip install scapy{Colors.RESET}\n")
     while True:
         os.system("clear" if os.name == "posix" else "cls")
-        print(Colors.CRIMSON + """
+        print(Colors.RED + """
  0-1-1-0-1-1-1-0-0-0-1-0-1-1-0-1-0-0-1-0-1
  0   ███████╗ ██████╗ █████╗ ███╗ 1 ██╗   1
  1   ██╔════╝██╔════╝██╔══██╗████╗1 ██║   0
@@ -3173,9 +3173,8 @@ def main():
         box_line("8) Web Scanning Tools", text_color=Colors.SKY_BLUE)
         box_line("9) OS Scanner", text_color=Colors.SKY_BLUE)
         box_line("10) Email Scanner", text_color=Colors.SKY_BLUE)
-        box_line("11) proxy tester", text_color=Colors.SKY_BLUE)
-        box_line("12) Port Scanner", text_color=Colors.SKY_BLUE)
-        box_line("13) DNS Tools", text_color=Colors.SKY_BLUE)
+        box_line("11) Proxy Tester", text_color=Colors.SKY_BLUE)
+        box_line("12) DNS Tools", text_color=Colors.SKY_BLUE)
         box_bottom()
 
         scan_mode = typed_input(Colors.AQUA + "[?] Choose mode (1-13): " + Colors.RESET).strip()
