@@ -48,6 +48,7 @@ except Exception:
         PURP = "\033[38;2;191;64;255m"; GRAY = "\033[38;2;110;110;120m"
         AQUA = "\033[38;2;0;255;213m"; CRIM = "\033[38;2;220;20;60m"
         LIME = "\033[38;2;180;255;0m"
+        FRAME = "\033[38;2;139;92;246m"
 
     def normalize_url(u: str) -> str:
         u = (u or "").strip()
@@ -123,7 +124,7 @@ def status(msg: str, kind: str = "info") -> None:
 def banner():
     clear()
     print(f"""
-{C.CRIM}{C.B}  ███████╗ ██████╗ ██╗     ██╗
+{C.RED}{C.B}  ███████╗ ██████╗ ██╗     ██╗
   ██╔════╝██╔═══██╗██║     ██║
   ███████╗██║   ██║██║     ██║
   ╚════██║██║▄▄ ██║██║     ██║
@@ -132,6 +133,233 @@ def banner():
 {C.GOLD}{C.B}     SQL Injection Engine  ·  detect · fingerprint · extract{C.R}
 {C.GRAY}     authorized / lab targets only{C.R}
 """)
+
+
+
+
+# ── shared preflight: speed / proxy / fake IP / 10 browser profiles ───────────
+BROWSER_PROFILES = [
+    {
+        "name": "Chrome 122 Win10",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Sec-Ch-Ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
+    },
+    {
+        "name": "Chrome 120 macOS",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"macOS"',
+        "Upgrade-Insecure-Requests": "1",
+    },
+    {
+        "name": "Firefox 122 Win10",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Upgrade-Insecure-Requests": "1",
+    },
+    {
+        "name": "Firefox 121 Linux",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Upgrade-Insecure-Requests": "1",
+    },
+    {
+        "name": "Safari 17 macOS",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_2) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+    },
+    {
+        "name": "Edge 122 Win11",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Sec-Ch-Ua": '"Not(A:Brand";v="24", "Chromium";v="122", "Microsoft Edge";v="122"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Upgrade-Insecure-Requests": "1",
+    },
+    {
+        "name": "Chrome 121 Android",
+        "User-Agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.6167.178 Mobile Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Sec-Ch-Ua-Mobile": "?1",
+        "Sec-Ch-Ua-Platform": '"Android"',
+        "Upgrade-Insecure-Requests": "1",
+    },
+    {
+        "name": "Safari iOS 17",
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+    },
+    {
+        "name": "Chrome 119 Win11",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-GB,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Upgrade-Insecure-Requests": "1",
+    },
+    {
+        "name": "Opera 106 Win10",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OPR/106.0.0.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Upgrade-Insecure-Requests": "1",
+    },
+]
+
+
+def _box_top(w=56):
+    print(f"{C.FRAME if hasattr(C,'FRAME') else C.GOLD}{C.B}┌{'─'*w}┐{C.R}")
+
+
+def _box_mid(w=56):
+    print(f"{C.FRAME if hasattr(C,'FRAME') else C.GOLD}{C.B}├{'─'*w}┤{C.R}")
+
+
+def _box_line(text, w=56):
+    # visible length rough (ignore ansi)
+    import re as _re
+    vis = len(_re.sub(r'\x1b\[[0-9;]*m', '', text))
+    pad = max(0, w - vis)
+    fr = C.FRAME if hasattr(C,'FRAME') else C.GOLD
+    print(f"{fr}{C.B}│{C.R} {text}{' '*pad}{fr}{C.B}│{C.R}")
+
+
+def _box_bottom(w=56):
+    print(f"{C.FRAME if hasattr(C,'FRAME') else C.GOLD}{C.B}└{'─'*w}┘{C.R}")
+
+
+def select_scan_speed():
+    print()
+    _box_top()
+    _box_line("SELECT SCAN SPEED")
+    _box_bottom()
+    print(f"  {C.GREEN}1){C.R} Super Slow   {C.GRAY}(threads=2  delay=1.00s){C.R}")
+    print(f"  {C.GREEN}2){C.R} Slow         {C.GRAY}(threads=4  delay=0.50s){C.R}")
+    print(f"  {C.GREEN}3){C.R} Normal       {C.GRAY}(threads=6  delay=0.20s){C.R}")
+    print(f"  {C.GREEN}4){C.R} Fast         {C.GRAY}(threads=12 delay=0.05s){C.R}")
+    print(f"  {C.GREEN}5){C.R} Super Fast   {C.GRAY}(threads=20 delay=0.01s){C.R}")
+    print()
+    choice = prompt("  choose speed (1-5)", "3")
+    table = {
+        "1": (2, 1.00, 6, 5.0, "Super Slow"),
+        "2": (4, 0.50, 5, 4.5, "Slow"),
+        "3": (6, 0.20, 5, 4.5, "Normal"),
+        "4": (12, 0.05, 3, 2.5, "Fast"),
+        "5": (20, 0.01, 3, 2.0, "Super Fast"),
+    }
+    threads, delay, sleep_s, th, label = table.get(choice, table["3"])
+    status(f"Speed: {label}  threads={threads} delay={delay}s", "ok")
+    return threads, delay, sleep_s, th, label
+
+
+def select_connection_mode():
+    print()
+    _box_top()
+    _box_line("SELECT CONNECTION / IP MODE")
+    _box_bottom()
+    print(f"  {C.GREEN}1){C.R} Own IP          {C.GRAY}(direct){C.R}")
+    print(f"  {C.GREEN}2){C.R} Custom Proxy    {C.GRAY}(http/socks){C.R}")
+    print(f"  {C.GREEN}3){C.R} Fake IP + UA    {C.GRAY}(faker headers, direct){C.R}")
+    print(f"  {C.GREEN}4){C.R} Proxy + Fake IP {C.GRAY}(proxy + faker){C.R}")
+    print()
+    choice = prompt("  choose mode (1-4)", "1")
+    proxies = None
+    extra = {}
+    label = "Own IP"
+
+    if choice in ("2", "4"):
+        proxy = prompt("  Proxy URL (http://127.0.0.1:8080 or socks5://...)", "")
+        if proxy:
+            proxies = {"http": proxy, "https": proxy}
+            label = f"Proxy ({proxy})"
+        else:
+            label = "Own IP (no proxy given)"
+
+    if choice in ("3", "4"):
+        try:
+            from faker import Faker
+            fake = Faker()
+            ip = fake.ipv4_public()
+            extra.update({
+                "X-Forwarded-For": ip,
+                "X-Real-IP": ip,
+                "X-Client-IP": ip,
+                "CF-Connecting-IP": ip,
+                "True-Client-IP": ip,
+                "Forwarded": f"for={ip};proto=https",
+            })
+            label = (label + " + FakeIP") if choice == "4" else f"Fake IP ({ip})"
+            status(f"Spoofed IP headers → {ip}", "ok")
+        except Exception as e:
+            status(f"faker unavailable ({e}), skip fake IP", "warn")
+
+    # attach a real browser profile
+    profile = random.choice(BROWSER_PROFILES)
+    for k, v in profile.items():
+        if k != "name":
+            extra[k] = v
+    status(f"Browser profile → {profile['name']}", "ok")
+    status(f"Mode: {label}", "ok")
+    return proxies, extra, label
+
+
+def select_browser_profile():
+    print()
+    _box_top()
+    _box_line("SELECT BROWSER PROFILE (10 real)")
+    _box_bottom()
+    for i, p in enumerate(BROWSER_PROFILES, 1):
+        print(f"  {C.GREEN}{i:2}){C.R} {p['name']}")
+    print(f"  {C.GREEN} 0){C.R} Random")
+    print()
+    ch = prompt("  choose profile (0-10)", "0")
+    if ch.isdigit() and 1 <= int(ch) <= 10:
+        profile = BROWSER_PROFILES[int(ch) - 1]
+    else:
+        profile = random.choice(BROWSER_PROFILES)
+    headers = {k: v for k, v in profile.items() if k != "name"}
+    status(f"Using: {profile['name']}", "ok")
+    return headers, profile["name"]
+
+
+def preflight():
+    """Common preflight for every SQLi action.
+    Returns threads, delay, sleep_s, time_threshold, proxies, extra_headers, speed_label, mode_label
+    """
+    threads, delay, sleep_s, th, speed_label = select_scan_speed()
+    proxies, extra, mode_label = select_connection_mode()
+    if yn("  pick specific browser profile?", False):
+        prof_headers, _ = select_browser_profile()
+        extra.update(prof_headers)
+    return threads, delay, sleep_s, th, proxies, extra, speed_label, mode_label
 
 
 # ── DBMS signatures ──────────────────────────────────────────────────────────
@@ -334,6 +562,7 @@ class EngineState:
     orig: Dict[str, str] = field(default_factory=dict)  # original param values
     cookies: Dict[str, str] = field(default_factory=dict)
     headers: Dict[str, str] = field(default_factory=dict)
+    proxies: Optional[Dict[str, str]] = None
     timeout: float = 12.0
     delay: float = 0.05
     threads: int = 6
@@ -406,6 +635,8 @@ class Http:
             self.s.headers.update(st.headers)
         if st.cookies:
             self.s.cookies.update(st.cookies)
+        if st.proxies:
+            self.s.proxies.update(st.proxies)
         self._lock = threading.Lock()
         self._last = 0.0
 
@@ -905,7 +1136,6 @@ class SQLiEngine:
         self.stage_extract_blind_mysql()
 
 
-# ── reporting ────────────────────────────────────────────────────────────────
 def save_report(st: EngineState) -> str:
     data = {
         "url": st.url,
@@ -941,19 +1171,25 @@ def save_report(st: EngineState) -> str:
 # ── interactive ──────────────────────────────────────────────────────────────
 def ask_target() -> EngineState:
     """Interactive target wizard — method, URL, param pick, cookies/headers, profile."""
-    print(f"  {C.FRAME}{C.B}┌── target wizard ──────────────────────────────┐{C.R}")
+    print()
+    _box_top(54)
+    _box_line("TARGET WIZARD", 54)
+    _box_bottom(54)
 
-    # ── 1) method ────────────────────────────────────────────────────────────
-    print(f"  {C.GOLD}[method]{C.R}")
-    print(f"    1  GET")
-    print(f"    2  POST")
-    print(f"    3  GET + cookies")
-    print(f"    4  POST + cookies")
+    print()
+    _box_top(54)
+    _box_line("METHOD", 54)
+    _box_mid(54)
+    _box_line("1) GET", 54)
+    _box_line("2) POST", 54)
+    _box_line("3) GET + cookies", 54)
+    _box_line("4) POST + cookies", 54)
+    _box_bottom(54)
     mc = prompt("  choose", "1")
     method = "POST" if mc in ("2", "4") else "GET"
     want_cookies = mc in ("3", "4")
 
-    # ── 2) URL ───────────────────────────────────────────────────────────────
+
     print(f"  {C.GOLD}[url]{C.R}  mark inject point with *  e.g. ?id=1*  or  /item/1*")
     raw_url = prompt("  URL", "")
     star_param = None
@@ -1005,14 +1241,19 @@ def ask_target() -> EngineState:
     url, params, data = ensure_params(url, method, data)
 
     # ── 3) param selection ───────────────────────────────────────────────────
-    print(f"  {C.GOLD}[params]{C.R}  discovered: {C.B}{', '.join(params) or '(none)'}{C.R}")
-    print(f"    1  test ALL params")
-    print(f"    2  pick by number")
-    print(f"    3  type names (comma)")
-    print(f"    4  common web set  (id,page,cat,uid,user,search,q,pid)")
-    print(f"    5  numeric only    (id,uid,pid,page,cat,item,product)")
+    print()
+    _box_top(54)
+    _box_line("PARAMS", 54)
+    _box_mid(54)
+    _box_line(f"discovered: {', '.join(params) or '(none)'}", 54)
+    _box_line("1) test ALL params", 54)
+    _box_line("2) pick by number", 54)
+    _box_line("3) type names (comma)", 54)
+    _box_line("4) common web set", 54)
+    _box_line("5) numeric only", 54)
     if star_param:
-        print(f"    6  marked only     ({star_param})")
+        _box_line(f"6) marked only ({star_param})", 54)
+    _box_bottom(54)
     pc = prompt("  choose", "6" if star_param else "1")
 
     COMMON = ["id", "page", "cat", "uid", "user", "search", "q", "pid", "item", "product", "cid", "sid"]
@@ -1129,39 +1370,29 @@ def ask_target() -> EngineState:
             else:
                 headers[hk] = hv
 
-    # ── 6) speed profile ─────────────────────────────────────────────────────
-    print(f"  {C.GOLD}[profile]{C.R}")
-    print(f"    1  fast     threads=12 delay=0.02 sleep=3  threshold=2.5")
-    print(f"    2  normal   threads=6  delay=0.05 sleep=5  threshold=4.5")
-    print(f"    3  stealth  threads=2  delay=0.4  sleep=6  threshold=5.0")
-    print(f"    4  custom")
-    pr = prompt("  choose", "2")
-    profiles = {
-        "1": (12, 0.02, 3, 2.5),
-        "2": (6, 0.05, 5, 4.5),
-        "3": (2, 0.4, 6, 5.0),
-    }
-    if pr in profiles:
-        threads, delay, sleep_s, th = profiles[pr]
-    else:
-        threads = max(1, min(20, int(prompt("  threads", "6") or "6")))
-        delay = float(prompt("  delay sec", "0.05") or "0.05")
-        sleep_s = max(2, min(12, int(prompt("  time-blind sleep", "5") or "5")))
-        th = float(prompt("  time threshold", "4.5") or "4.5")
+    # ── 6) speed + connection + browser profiles (unified preflight) ─────────
+    threads, delay, sleep_s, th, proxies, extra_hdrs, speed_label, mode_label = preflight()
+    # merge profile/fake headers into request headers
+    headers = dict(headers or {})
+    headers.update(extra_hdrs or {})
 
     # ── summary ──────────────────────────────────────────────────────────────
-    print(f"  {C.FRAME}└──────────────────────────────────────────────{C.R}")
+    fr = getattr(C, "FRAME", C.GOLD)
+    print(f"  {fr}└──────────────────────────────────────────────{C.R}")
     status(f"{method} {url}", "info")
     status(f"params → {params}", "info")
     if cookies:
         status(f"cookies → {list(cookies.keys())}", "info")
     if headers:
-        status(f"headers → {list(headers.keys())}", "info")
-    status(f"profile threads={threads} delay={delay} sleep={sleep_s}s thr={th}", "info")
+        status(f"headers → {list(headers.keys())[:8]}...", "info")
+    status(f"speed={speed_label}  mode={mode_label}", "info")
+    status(f"threads={threads} delay={delay} sleep={sleep_s}s thr={th}", "info")
+    if proxies:
+        status(f"proxy → {proxies.get('http') or proxies.get('https')}", "info")
 
     return EngineState(
         url=url, method=method, data=data, params=params,
-        cookies=cookies, headers=headers,
+        cookies=cookies, headers=headers, proxies=proxies,
         threads=threads, delay=delay, sleep_s=sleep_s, time_threshold=th,
     )
 
@@ -1192,7 +1423,11 @@ def run_menu_action(mode: str) -> None:
         "error": "ERROR-BASED DETECTION",
         "all": "ALL — every technique, multi-DBMS, extract + blind",
     }
-    print(f"  {C.B}{titles.get(mode, mode)}{C.R}\n")
+    print()
+    _box_top(54)
+    _box_line(titles.get(mode, mode)[:52], 54)
+    _box_bottom(54)
+    print()
     st = ask_target()
     if not st.url:
         status("empty URL", "err")
@@ -1230,17 +1465,20 @@ def run_menu_action(mode: str) -> None:
 def run():
     while True:
         banner()
-        box("SQLi Engine", [
-            ("1", "Full pipeline (detect + fingerprint + extract)"),
-            ("2", "Detect only (error / boolean / time)"),
-            ("3", "Extract (schema / tables / columns / rows)"),
-            ("4", "UNION column enum + version"),
-            ("5", "Time-based blind only"),
-            ("6", "Error-based only"),
-            ("7", "ALL — every technique (aggressive)"),
-            ("0", "Back"),
-        ])
+        _box_top(54)
+        _box_line("SQL INJECTION ENGINE", 54)
+        _box_mid(54)
+        _box_line(" 1)  Full pipeline       detect + fingerprint + extract", 54)
+        _box_line(" 2)  Detect only         error / boolean / time", 54)
+        _box_line(" 3)  Extract only        schema / tables / columns", 54)
+        _box_line(" 4)  ALL (aggressive)    every technique, multi-DBMS", 54)
+        _box_line(" 5)  Manual technique    UNION / Time / Error", 54)
+        _box_mid(54)
+        _box_line(" 0)  Back", 54)
+        _box_bottom(54)
+        print()
         c = prompt(">>", "0")
+
         if c == "0":
             return
         elif c == "1":
@@ -1250,17 +1488,35 @@ def run():
         elif c == "3":
             run_menu_action("extract")
         elif c == "4":
-            run_menu_action("union")
-        elif c == "5":
-            run_menu_action("time")
-        elif c == "6":
-            run_menu_action("error")
-        elif c == "7":
             run_menu_action("all")
+        elif c == "5":
+            while True:
+                banner()
+                _box_top(54)
+                _box_line("MANUAL TECHNIQUE", 54)
+                _box_mid(54)
+                _box_line(" 1)  UNION column enum + version", 54)
+                _box_line(" 2)  Time-based blind only", 54)
+                _box_line(" 3)  Error-based only", 54)
+                _box_mid(54)
+                _box_line(" 0)  Back", 54)
+                _box_bottom(54)
+                print()
+                sub = prompt(">>", "0")
+                if sub == "0":
+                    break
+                elif sub == "1":
+                    run_menu_action("union")
+                elif sub == "2":
+                    run_menu_action("time")
+                elif sub == "3":
+                    run_menu_action("error")
+                else:
+                    status("invalid", "err")
+                    time.sleep(0.4)
         else:
             status("invalid", "err")
             time.sleep(0.4)
-
 
 if __name__ == "__main__":
     try:
