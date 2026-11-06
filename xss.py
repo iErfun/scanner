@@ -65,12 +65,12 @@ class C:
     YEL = "\033[93m"
     CYN = "\033[96m"
     WHT = "\033[97m"
-    GLD = "\033[38;2;255;215;0m"
-    NEO = "\033[38;2;0;255;213m"
-    PRP = "\033[38;2;191;64;255m"
-    CRM = "\033[38;2;220;20;60m"
-    GRY = "\033[38;2;110;110;120m"
-    LIME = "\033[38;2;180;255;0m"
+    GLD = "\033[38;2;239;190;112m"
+    NEO = "\033[38;2;82;190;255m"
+    PRP = "\033[38;2;151;145;235m"
+    CRM = "\033[38;2;232;112;125m"
+    GRY = "\033[38;2;137;151;171m"
+    LIME = "\033[38;2;111;204;166m"
 
 
 USER_AGENTS = [
@@ -111,16 +111,19 @@ def pause():
 
 
 def box(title: str, rows: List[Tuple[str, str]], width: int = 62) -> None:
-    print(f"{C.GLD}+{'-' * width}+{C.R}")
+    """Render a compact, aligned terminal panel."""
+    inner = max(width - 2, 20)
+    edge = C.PRP
+    print(f"{edge}╭{'─' * inner}╮{C.R}")
     if title:
-        pad = max(width - len(title), 0)
-        print(f"{C.GLD}|{C.R}  {C.B}{title}{C.R}{' ' * max(pad - 2, 0)}")
-        print(f"{C.GLD}+{'-' * width}+{C.R}")
+        label = f"  {C.B}{C.WHT}{title}{C.R}"
+        print(f"{edge}│{C.R}{label}{' ' * max(inner - len(title) - 2, 0)}{edge}│{C.R}")
+        print(f"{edge}├{'─' * inner}┤{C.R}")
     for key, label in rows:
-        line = f"  {C.GLD}{key}{C.R}  {label}"
-        print(f"{C.GLD}|{C.R}{line}")
-    print(f"{C.GLD}+{'-' * width}+{C.R}")
-
+        plain = f"  {key:<3} {label}"
+        clean = re.sub(r"\033\[[0-9;]*m", "", plain)
+        print(f"{edge}│{C.R}{plain}{' ' * max(inner - len(clean), 0)}{edge}│{C.R}")
+    print(f"{edge}╰{'─' * inner}╯{C.R}")
 
 def prompt(label: str, default: str = "") -> str:
     suf = f" {C.GRY}[{default}]{C.R}" if default else ""
@@ -139,20 +142,13 @@ def yn(label: str, default: bool = False) -> bool:
 
 def banner():
     clear()
-    print(f"""
-{C.PRP}{C.B}  ██╗  ██╗███████╗███████╗
-  ╚██╗██╔╝██╔════╝██╔════╝
-   ╚███╔╝ ███████╗███████╗
-   ██╔██╗ ╚════██║╚════██║
-  ██╔╝ ██╗███████║███████║
-  ╚═╝  ╚═╝╚══════╝╚══════╝{C.R}
-{C.GLD}{C.B}          XSS Scanner  ·  reflection · context · bypass{C.R}
-{C.GRY}          lab / authorized targets only{C.R}
-  {C.GRN if HAS_XSSPOR else C.YEL}[xsspor {'OK' if HAS_XSSPOR else 'off'}]{C.R}  \
-{C.GRN if HAS_CHAIN else C.YEL}[chain {'OK' if HAS_CHAIN else 'off'}]{C.R}  \
-{C.GRN if HAS_PLAYWRIGHT else C.YEL}[browser {'OK' if HAS_PLAYWRIGHT else 'off'}]{C.R}
-""")
-
+    print(f"\n{C.PRP}{C.B}  XOMLSX  /  XSS ANALYSIS{C.R}")
+    print(f"{C.GRY}  Reflection detection  •  Context analysis  •  Browser verification{C.R}")
+    print(
+        f"  {C.GRN if HAS_XSSPOR else C.YEL}● xsspor: {'ready' if HAS_XSSPOR else 'unavailable'}{C.R}   "
+        f"{C.GRN if HAS_CHAIN else C.YEL}● chain: {'ready' if HAS_CHAIN else 'unavailable'}{C.R}   "
+        f"{C.GRN if HAS_PLAYWRIGHT else C.YEL}● browser: {'ready' if HAS_PLAYWRIGHT else 'unavailable'}{C.R}\n"
+    )
 
 def status_line(msg: str, kind: str = "info"):
     colors = {"ok": C.GRN, "err": C.CRM, "warn": C.YEL, "info": C.CYN, "hit": C.LIME}
