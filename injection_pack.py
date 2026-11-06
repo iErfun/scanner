@@ -13,6 +13,7 @@ from core_utils import (
     normalize_url,
     params_from_url,
     pause,
+    preflight_attack,
     print_finding,
     save_json_report,
     session,
@@ -44,7 +45,7 @@ LFI = [
 ]
 
 
-def probe(url: str) -> List[dict]:
+def probe(url: str, proxies=None, headers=None, delay: float = 0.0) -> List[dict]:
     findings: List[dict] = []
     params = params_from_url(url)
     if not params:
@@ -56,7 +57,10 @@ def probe(url: str) -> List[dict]:
         url = base
         params = params_from_url(url) or ["id"]
 
-    s = session(timeout=10)
+    s = session(timeout=10, proxies=proxies, headers=headers)
+    if delay:
+        import time as _time
+        _time.sleep(delay)
     baseline = get(s, url, allow_redirects=True, timeout=10)
     base_text = (baseline.text if baseline else "") or ""
 
@@ -106,8 +110,9 @@ def run(url: str = None):
     if not url:
         pause()
         return
+    cfg = preflight_attack()
     print(f"{C.GOLD}[*] Probing {url} ...{C.R}")
-    findings = probe(url)
+    findings = probe(url, proxies=cfg["proxies"], headers=cfg["headers"], delay=cfg["delay"])
     print(f"\n{C.NEON}[+] Findings: {len(findings)}{C.R}")
     path = save_json_report("injection_pack", {"url": url, "findings": findings})
     print(f"{C.GREEN}[+] Saved: {path}{C.R}")
