@@ -23,12 +23,10 @@ def _app_root():
 BASE = _app_root()
 if BASE not in sys.path:
     sys.path.insert(0, BASE)
-# also keep the real exe dir for reports written next to the binary
 EXE_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else BASE
 if EXE_DIR not in sys.path:
     sys.path.insert(0, EXE_DIR)
 
-# PyInstaller analysis anchors — keep modules in the frozen graph
 try:
     import core_utils  # noqa: F401
     import subdomain_enum  # noqa: F401
@@ -73,6 +71,7 @@ class Colors:
     NEON_ORANGE = '\033[38;2;239;190;112m'
 
 
+
 C = Colors
 _ANSI = _re.compile(r'\033\[[0-9;]*m')
 
@@ -94,8 +93,16 @@ BOX_W = 58
 BOX_C = C.CORNFLOWER
 
 
-def _hline():
-    return f"{BOX_C}{C.B}+{'-' * BOX_W}+{C.R}"
+def _hline_top():
+    return f"{BOX_C}{C.B}┌{'─' * BOX_W}┐{C.R}"
+
+
+def _hline_mid():
+    return f"{BOX_C}{C.B}├{'─' * BOX_W}┤{C.R}"
+
+
+def _hline_bot():
+    return f"{BOX_C}{C.B}└{'─' * BOX_W}┘{C.R}"
 
 
 def box_top(title):
@@ -103,24 +110,24 @@ def box_top(title):
     left = pad // 2
     right = pad - left
     return (
-        _hline() + "\n" +
-        f"{BOX_C}{C.B}|{C.R}"
+        _hline_top() + "\n" +
+        f"{BOX_C}{C.B}│{C.R}"
         f"{' ' * left}{title}{' ' * right}"
-        f"{BOX_C}{C.B}|{C.R}" + "\n" +
-        _hline()
+        f"{BOX_C}{C.B}│{C.R}" + "\n" +
+        _hline_mid()
     )
 
 
 def box_item(key, label):
     line = f" {C.GOLD}{key}{C.R}) {label}"
-    space = BOX_W - _vlen(line) - 1
+    space = BOX_W - _vlen(line)
     if space < 1:
         space = 1
-    return f"{BOX_C}{C.B}|{C.R}{line}{' ' * space}{BOX_C}{C.B}|{C.R}"
+    return f"{BOX_C}{C.B}│{C.R}{line}{' ' * space}{BOX_C}{C.B}│{C.R}"
 
 
 def box_bottom():
-    return _hline()
+    return _hline_bot()
 
 
 def box_menu(title, items):
@@ -133,8 +140,15 @@ def box_menu(title, items):
 
 def banner():
     clear()
-    print(f"\n{C.NEON_CYAN}{C.B}  X O M L S X  /  SECURITY WORKSPACE{C.R}")
-    print(f"{C.DIM_GRAY}  Reconnaissance  •  Assessment  •  Intelligence{C.R}\n")
+    print(f"""{C.RED}{C.B}
+██╗  ██╗ ██████╗ ███╗   ███╗██╗     ███████╗██╗  ██╗
+╚██╗██╔╝██╔═══██╗████╗ ████║██║     ██╔════╝╚██╗██╔╝
+ ╚███╔╝ ██║   ██║██╔████╔██║██║     ███████╗ ╚███╔╝ 
+ ██╔██╗ ██║   ██║██║╚██╔╝██║██║     ╚════██║ ██╔██╗ 
+██╔╝ ██╗╚██████╔╝██║ ╚═╝ ██║███████╗███████║██╔╝ ██╗
+╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝
+{C.R}{C.DIM_GRAY} {C.R}
+""")
     print(box_menu("MAIN MENU", [
         ("1", f"{C.NEON_CYAN}Network Scanner{C.R}"),
         ("2", f"{C.NEON_CYAN}Attack & Assessment{C.R}"),
@@ -145,7 +159,11 @@ def banner():
 
 def attack_banner():
     clear()
-    print(f"\n{C.NEON_PURPLE}{C.B}  ATTACK & ASSESSMENT{C.R}")
+    print(f"""{C.RED}{C.B}
+▄████▄ ██████ ██████ ▄████▄ ▄█████ ██ ▄█▀
+██▄▄██   ██     ██   ██▄▄██ ██     ████  
+██  ██   ██     ██   ██  ██ ▀█████ ██ ▀█▄
+{C.R}""")
     print(f"{C.DIM_GRAY}  Testing modules and security checks{C.R}\n")
     print(box_menu("MODULES", [
         ("1", f"{C.NEON_CYAN}Bruteforce{C.R}"),
@@ -163,8 +181,11 @@ def attack_banner():
 
 def osint_banner():
     clear()
-    print(f"\n{C.NEON_PURPLE}{C.B}  OSINT & INTELLIGENCE{C.R}")
-    print(f"{C.DIM_GRAY}  Open-source information gathering{C.R}\n")
+    print(f"""{C.RED}{C.B}
+ ▄▄▄   ▄▄▄▄ ▄▄ ▄▄  ▄▄ ▄▄▄▄▄▄ 
+██▀██ ███▄▄ ██ ███▄██   ██   
+▀███▀ ▄▄██▀ ██ ██ ▀██   ██   
+{C.R}""")
     print(box_menu("MODULES", [
         ("1", f"{C.NEON_CYAN}Username Finder{C.R}"),
         ("2", f"{C.NEON_CYAN}IP Intelligence{C.R}"),
@@ -219,7 +240,6 @@ def run_xss():
 def run_osint_module(name):
     def _():
         import importlib
-        # email_checker lives at project root; others under osint/
         if name == "email_checker":
             mod = importlib.import_module("email_checker")
         else:
@@ -460,7 +480,6 @@ def _run_module(name):
         mod = importlib.import_module(name)
     except Exception as e:
         last_err = e
-        # file fallback across frozen extract dir + cwd
         fname = name.replace(".", os.sep) + ".py"
         for root in search_roots:
             fpath = os.path.join(root, fname)
@@ -488,7 +507,6 @@ def _run_module(name):
             try:
                 getattr(mod, fn)()
             except SystemExit as se:
-                # modules sometimes call sys.exit after a scan — stay in launcher
                 code = getattr(se, "code", None)
                 if code not in (None, 0):
                     print(f"{C.DIM_GRAY}[module exit code {code}]{C.R}")
