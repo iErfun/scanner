@@ -7,14 +7,13 @@ permissions:
   contents: write
 
 concurrency:
-  group: windows-release
+  group: xomscanner-release
   cancel-in-progress: false
 
 jobs:
   validate-version:
-    name: Validate release version
+    name: Validate VERSION
     runs-on: windows-latest
-    timeout-minutes: 5
     outputs:
       tag: ${{ steps.version.outputs.tag }}
     steps:
@@ -23,74 +22,75 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate VERSION and check existing tag
+      - name: Validate VERSION and check remote tag
         id: version
         shell: bash
         run: |
           set -euo pipefail
 
           if [[ ! -f VERSION ]]; then
-            echo "::error title=VERSION file missing::Add a VERSION file to the repository root (for example: v1.0.20)."
+            echo "::error::VERSION file is missing from the repository root."
             exit 1
           fi
 
-          TAG="$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' VERSION)"
-
-          if [[ -z "$TAG" ]]; then
-            echo "::error title=VERSION file is empty::Set VERSION to a value such as v1.0.20."
-            exit 1
-          fi
-
+          TAG="$(tr -d '\r\n' < VERSION | xargs)"
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error title=Invalid version format::'$TAG' is invalid. Use vMAJOR.MINOR.PATCH, for example v1.0.20."
+            echo "::error::Invalid VERSION '$TAG'. Expected vMAJOR.MINOR.PATCH, e.g. v1.0.20."
             exit 1
           fi
 
-          echo "Requested release version: $TAG"
-
-          set +e
-          git ls-remote --exit-code --tags origin \
-            "refs/tags/${TAG}" "refs/tags/${TAG}^{}" \
-            > /tmp/existing-tags.txt 2> /tmp/tag-check-error.txt
-          CHECK_STATUS=$?
-          set -e
-
-          if [[ "$CHECK_STATUS" -eq 0 ]]; then
-            echo "::error title=Version already exists::Tag '$TAG' already exists. Update VERSION before starting a new build."
-            cat /tmp/existing-tags.txt
-            exit 1
-          elif [[ "$CHECK_STATUS" -ne 2 ]]; then
-            echo "::error title=Could not check remote tags::Git returned exit code $CHECK_STATUS. Build cancelled to avoid creating a duplicate release."
-            cat /tmp/tag-check-error.txt
+          REMOTE_TAGS="$(git ls-remote --tags origin "refs/tags/${TAG}" "refs/tags/${TAG}^{}")"
+          if [[ -n "$REMOTE_TAGS" ]]; then
+            echo "::error::Tag '$TAG' already exists on origin. Change VERSION before releasing."
+            echo "$REMOTE_TAGS"
             exit 1
           fi
 
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "Version validation passed: $TAG"
+          echo "Validated release tag: $TAG"
 
-  build:
-    name: Build ${{ needs.validate-version.outputs.tag }} - ${{ matrix.platform }}
+  build-windows:
+    name: Build Windows x64
     needs: validate-version
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: Windows-x64
-            runner: windows-latest
-            filename: XomScanner-Windows-64x.exe
-            executable: XomScanner-Windows-64x
-            sep: ";"
+    runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
+          cache: pip
 
-      - name: Install Python packages
+      - name: Install dependencies
+        shell: pwsh
         run: |
+          python -m pip install --upgrade pip wheel
+          python -m pip install pyinstaller
+          python -m pip install -r requirements.txt
+          python -m pip install cryptography PySocks requests urllib3 scapy faker paramiko
+
+      - name: Build EXE
+        shell: pwsh
+        run: |
+          pyinstaller `
+            --noconfirm `
+            --clean `
+            --onefile `
+            --name "XomScanner-Windows-64x" `
+            --paths . `
+            --hidden-import=brute `
+            --hidden-import=scanner `
+            --hidden-import=proxy_tester `
+            --hidden-import=word_list `
+            --hidden-import=xss `
+            --hidden-import=scan_win `
+            --hidden-import=email_checker `
+            --hidden-import=username_finder `
+            --hidden-import=attacks_modern `
+            --hidden-import=osint `
+            --hidden-import=osint.ip_intel `
+            --hidden-import=osint.metadata `
+            --hidden-import=osint.username_finder `
