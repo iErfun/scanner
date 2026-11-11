@@ -39,6 +39,39 @@ COMMON = [
 ]
 
 
+# ── UI ───────────────────────────────────────────────────────────────────────
+def clear():
+    os.system("cls" if os.name == "nt" else "clear")
+
+
+def print_banner():
+    crimson = getattr(C, "CRIM", getattr(C, "PURP", ""))
+    gold = getattr(C, "GOLD", getattr(C, "YEL", ""))
+    gray = getattr(C, "GRAY", getattr(C, "DIM", ""))
+    dim = getattr(C, "DIM", "")
+    reset = C.R
+    clear()
+    print(f"""{crimson}{C.B}
+  ▄█████ ▄▄ ▄▄ ▄▄▄▄  ▄▄▄▄   ▄▄▄  ▄▄   ▄▄  ▄▄▄  ▄▄ ▄▄  ▄▄ 
+  ▀▀▀▄▄▄ ██ ██ ██▄██ ██▀██ ██▀██ ██▀▄▀██ ██▀██ ██ ███▄██ 
+  █████▀ ▀███▀ ██▄█▀ ████▀ ▀███▀ ██   ██ ██▀██ ██ ██ ▀██
+  
+""")
+
+
+def status(msg: str, kind: str = "info") -> None:
+    m = {
+        "ok":   (C.GREEN,  "[+]"),
+        "err":  (getattr(C, "CRIM", C.RED), "[!]"),
+        "warn": (getattr(C, "YEL", C.YELLOW), "[~]"),
+        "info": (C.CYN,    "[*]"),
+        "hit":  (C.GREEN,  "[!]"),
+    }
+    c, t = m.get(kind, (C.CYN, "[*]"))
+    print(f"  {c}{t} {msg}{C.R}")
+
+
+# ── core ─────────────────────────────────────────────────────────────────────
 def resolve(host: str) -> List[str]:
     return resolve_host(host)
 
@@ -123,20 +156,21 @@ def brute(domain: str, wordlist: List[str], threads: int = 50) -> Set[str]:
             if res:
                 host, ips = res
                 found.add(host)
-                print(f"  {C.GREEN}[dns]{C.R} {host}  {C.GRAY}{', '.join(ips)}{C.R}")
+                print(f"  {C.GREEN}[dns]{C.R} {host}  "
+                      f"{getattr(C, 'GRAY', C.DIM)}{', '.join(ips)}{C.R}")
     return found
 
 
 def run(domain: str = None):
-    print(f"\n{C.PURP}{C.B}  Subdomain Enumeration{C.R}\n")
-    domain = strip_scheme(domain or input(f"{C.AQUA}[?] Domain (example.com): {C.R}"))
+    print_banner()
+    domain = strip_scheme(domain or input(f"  {C.AQUA}[?] Domain (example.com): {C.R}"))
     if not domain:
-        print(f"{C.RED}[!] empty domain{C.R}")
+        status("empty domain", "err")
         pause()
         return
 
-    wl_path = input(f"{C.AQUA}[?] Extra wordlist path (Enter=built-in only): {C.R}").strip()
-    threads_s = input(f"{C.AQUA}[?] Threads [50]: {C.R}").strip() or "50"
+    wl_path = input(f"  {C.AQUA}[?] Extra wordlist path (Enter=built-in only): {C.R}").strip()
+    threads_s = input(f"  {C.AQUA}[?] Threads [50]: {C.R}").strip() or "50"
     try:
         threads = max(1, min(200, int(threads_s)))
     except ValueError:
@@ -145,22 +179,23 @@ def run(domain: str = None):
     all_hosts: Set[str] = {domain}
     sources = {}
 
-    print(f"{C.GOLD}[*] crt.sh ...{C.R}")
+    status("crt.sh ...", "info")
     certs = crtsh(domain)
     sources["crt.sh"] = len(certs)
     for h in sorted(certs):
         ips = resolve(h)
-        print(f"  {C.GREEN}[crt]{C.R} {h}  {C.GRAY}{', '.join(ips) if ips else '-'}{C.R}")
+        print(f"  {C.GREEN}[crt]{C.R} {h}  "
+              f"{getattr(C, 'GRAY', C.DIM)}{', '.join(ips) if ips else '-'}{C.R}")
     all_hosts |= certs
 
-    print(f"{C.GOLD}[*] ThreatCrowd ...{C.R}")
+    status("ThreatCrowd ...", "info")
     tc = threatcrowd(domain)
     sources["threatcrowd"] = len(tc)
     for h in sorted(tc - all_hosts):
         print(f"  {C.GREEN}[tc]{C.R}  {h}")
     all_hosts |= tc
 
-    print(f"{C.GOLD}[*] HackerTarget ...{C.R}")
+    status("HackerTarget ...", "info")
     ht = hackertarget(domain)
     sources["hackertarget"] = len(ht)
     for h in sorted(ht - all_hosts):
@@ -168,23 +203,24 @@ def run(domain: str = None):
     all_hosts |= ht
 
     words = load_wordlist(wl_path or None)
-    print(f"{C.GOLD}[*] DNS brute ({len(words)} words, {threads} threads) ...{C.R}")
+    status(f"DNS brute ({len(words)} words, {threads} threads) ...", "info")
     bruted = brute(domain, words, threads=threads)
     sources["dns_brute"] = len(bruted)
     all_hosts |= bruted
 
     sorted_hosts = sorted(all_hosts)
-    print(f"\n{C.NEON}[+] Total unique hosts: {len(sorted_hosts)}{C.R}")
+    print()
+    status(f"Total unique hosts: {len(sorted_hosts)}", "hit")
     for k, v in sources.items():
-        print(f"    {C.GRAY}{k}: {v}{C.R}")
+        print(f"    {getattr(C, 'GRAY', C.DIM)}{k}: {v}{C.R}")
 
     path = save_text_report("subdomains", f"Subdomains — {domain}", sorted_hosts)
     jpath = save_json_report(
         "subdomains",
         {"domain": domain, "hosts": sorted_hosts, "sources": sources},
     )
-    print(f"{C.GREEN}[+] Saved: {path}{C.R}")
-    print(f"{C.GREEN}[+] Saved: {jpath}{C.R}")
+    status(f"saved → {path}", "ok")
+    status(f"saved → {jpath}", "ok")
     pause()
 
 
