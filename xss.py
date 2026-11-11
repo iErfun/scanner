@@ -142,14 +142,17 @@ def yn(label: str, default: bool = False) -> bool:
 
 def banner():
     clear()
-    print(f"\n{C.PRP}{C.B}  XOMLSX  /  XSS ANALYSIS{C.R}")
-    print(f"{C.GRY}  Reflection detection  •  Context analysis  •  Browser verification{C.R}")
-    print(
-        f"  {C.GRN if HAS_XSSPOR else C.YEL}● xsspor: {'ready' if HAS_XSSPOR else 'unavailable'}{C.R}   "
-        f"{C.GRN if HAS_CHAIN else C.YEL}● chain: {'ready' if HAS_CHAIN else 'unavailable'}{C.R}   "
-        f"{C.GRN if HAS_PLAYWRIGHT else C.YEL}● browser: {'ready' if HAS_PLAYWRIGHT else 'unavailable'}{C.R}\n"
-    )
-
+    print(f"""{C.RED}{C.B}
+▒██   ██▒  ██████   ██████ 
+▒▒ █ █ ▒░▒██    ▒ ▒██    ▒ 
+░░  █   ░░ ▓██▄   ░ ▓██▄   
+ ░ █ █ ▒   ▒   ██▒  ▒   ██▒
+▒██▒ ▒██▒▒██████▒▒▒██████▒▒
+▒▒ ░ ░▓ ░▒ ▒▓▒ ▒ ░▒ ▒▓▒ ▒ ░
+░░   ░▒ ░░ ░▒  ░ ░░ ░▒  ░ ░
+ ░    ░  ░  ░  ░  ░  ░  ░  
+ ░    ░        ░        ░  
+""")
 def status_line(msg: str, kind: str = "info"):
     colors = {"ok": C.GRN, "err": C.CRM, "warn": C.YEL, "info": C.CYN, "hit": C.LIME}
     mark = {"ok": "[+]", "err": "[!]", "warn": "[~]", "info": "[*]", "hit": "[!]"}
