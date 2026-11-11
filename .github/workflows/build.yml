@@ -11,51 +11,65 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  validate-version:
+  validate:
     name: Validate VERSION
     runs-on: windows-latest
     outputs:
       tag: ${{ steps.version.outputs.tag }}
+      tag_exists: ${{ steps.version.outputs.tag_exists }}
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Validate VERSION and check remote tag
+      - name: Validate VERSION and inspect remote tag
         id: version
-        shell: bash
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
+          $ErrorActionPreference = "Stop"
 
-          if [[ ! -f VERSION ]]; then
-            echo "::error::VERSION file is missing from the repository root."
-            exit 1
-          fi
+          if (!(Test-Path "VERSION")) {
+            throw "VERSION file not found in repository root."
+          }
 
-          TAG="$(tr -d '\r\n' < VERSION | xargs)"
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Invalid VERSION '$TAG'. Expected vMAJOR.MINOR.PATCH, e.g. v1.0.20."
-            exit 1
-          fi
+          $tag = (Get-Content "VERSION" -Raw).Trim()
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "Invalid VERSION '$tag'. Expected format: v1.2.3"
+          }
 
-          REMOTE_TAGS="$(git ls-remote --tags origin "refs/tags/${TAG}" "refs/tags/${TAG}^{}")"
-          if [[ -n "$REMOTE_TAGS" ]]; then
-            echo "::error::Tag '$TAG' already exists on origin. Change VERSION before releasing."
-            echo "$REMOTE_TAGS"
-            exit 1
-          fi
+          # Check whether this tag already exists on origin.
+          $remoteTag = git ls-remote --tags origin "refs/tags/$tag"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not query remote tags. Check repository network/access."
+          }
 
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "Validated release tag: $TAG"
+          $tagExists = "false"
+          if ($remoteTag) {
+            # A previous run may have pushed the tag but failed before publishing.
+            # Permit recovery if no GitHub Release exists yet.
+            gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+            if ($LASTEXITCODE -eq 0) {
+              throw "Tag '$tag' and its GitHub Release already exist. Change VERSION."
+            }
+            $tagExists = "true"
+            Write-Host "Tag '$tag' exists, but its Release is missing. Will repair the Release."
+          } else {
+            Write-Host "Tag '$tag' does not exist yet. It will be created during release."
+          }
 
-  build-windows:
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "tag_exists=$tagExists" >> $env:GITHUB_OUTPUT
+
+  build:
     name: Build Windows x64
-    needs: validate-version
+    needs: validate
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -75,22 +89,8 @@ jobs:
       - name: Build EXE
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
           pyinstaller `
             --noconfirm `
             --clean `
-            --onefile `
-            --name "XomScanner-Windows-64x" `
-            --paths . `
-            --hidden-import=brute `
-            --hidden-import=scanner `
-            --hidden-import=proxy_tester `
-            --hidden-import=word_list `
-            --hidden-import=xss `
-            --hidden-import=scan_win `
-            --hidden-import=email_checker `
-            --hidden-import=username_finder `
-            --hidden-import=attacks_modern `
-            --hidden-import=osint `
-            --hidden-import=osint.ip_intel `
-            --hidden-import=osint.metadata `
-            --hidden-import=osint.username_finder `
