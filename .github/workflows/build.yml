@@ -13,7 +13,7 @@ concurrency:
 jobs:
   validate-version:
     name: Validate release version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       tag: ${{ steps.version.outputs.tag }}
@@ -82,7 +82,7 @@ jobs:
             filename: XomScanner-Windows-64x.exe
             sep: ";"
           - platform: Linux-x64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             filename: XomScanner-Linux-64x
             sep: ":"
     steps:
@@ -95,11 +95,39 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Install Linux build deps
+      - name: Install Linux build dependencies (with retries)
         if: runner.os == 'Linux'
+        shell: bash
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq build-essential libpcap-dev libffi-dev
+          set -Eeuo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+
+          APT_OPTIONS=(
+            -o Acquire::Retries=5
+            -o Acquire::http::Timeout=30
+            -o Acquire::https::Timeout=30
+            -o Acquire::Queue-Mode=access
+          )
+
+          for attempt in 1 2 3 4 5; do
+            echo "APT dependency installation attempt ${attempt}/5"
+
+            if sudo apt-get "${APT_OPTIONS[@]}" update && \
+               sudo apt-get "${APT_OPTIONS[@]}" install -y --no-install-recommends \
+                 build-essential libpcap-dev libffi-dev; then
+              echo "Linux build dependencies installed successfully."
+              exit 0
+            fi
+
+            if [[ "$attempt" -lt 5 ]]; then
+              delay=$((attempt * 15))
+              echo "::warning::APT failed (often due to temporary DNS/network issues). Retrying in ${delay}s..."
+              sleep "$delay"
+            fi
+          done
+
+          echo "::error title=APT installation failed::Could not update package indexes or install Linux build dependencies after 5 attempts. Check runner DNS/network availability and rerun the workflow."
+          exit 1
 
       - name: Install Python packages
         run: |
@@ -185,7 +213,7 @@ jobs:
     name: Create Release ${{ needs.validate-version.outputs.tag }}
     needs: [validate-version, build]
     if: success()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
