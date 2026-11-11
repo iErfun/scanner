@@ -482,9 +482,16 @@ class BruteForcer:
         return self.found, elapsed, self.attempts
 
 def banner():
-    print(f"\n{C.PURPLE}{C.B}  XOMLSX  /  AUTHENTICATION AUDIT{C.R}")
-    print(f"{C.DIM}  HTTP Basic  •  Form Login  •  SSH  •  FTP{C.R}\n")
 
+    print(f"""{C.RED}{C.B}
+      ▄▄▄▄  ▄▄▄▄  ▄▄ ▄▄ ▄▄▄▄▄▄ ▄▄▄▄▄ 
+      ██▄██ ██▄█▄ ██ ██   ██   ██▄▄  
+      ██▄█▀ ██ ██ ▀███▀   ██   ██▄▄▄ 
+
+{C.R}{C.GOLD}{C.B}      XOMLEK  /  AUTHENTICATION AUDIT{C.R}
+{C.CRIM}   HTTP Basic  •  Form Login  •  SSH  •  FTP{C.R}
+{C.DIM}         authorized testing only{C.R}
+""")
 
 def menu():
     width = 54
