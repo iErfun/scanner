@@ -48,6 +48,7 @@ except Exception:
         AQUA = "\033[38;2;82;190;255m"; CRIM = "\033[38;2;232;112;125m"
         LIME = "\033[38;2;111;204;166m"
         FRAME = "\033[38;2;77;105;145m"
+        RED_TRUE = "\033[1;38;2;255;0;0m"  # bold + bright red RGB
 
     def normalize_url(u: str) -> str:
         u = (u or "").strip()
@@ -125,8 +126,17 @@ def status(msg: str, kind: str = "info") -> None:
 
 def banner():
     clear()
-    print(f"\n{C.PURP}{C.B}  XOMLSX  /  SQL INJECTION ENGINE{C.R}")
-    print(f"{C.GRAY}  Detection  •  Fingerprinting  •  Validation{C.R}\n")
+    print(f"""{C.RED}{C.B}
+    ██████   █████   ██▓    
+   ▒██    ▒ ▒██▓  ██▒▓██▒    
+   ░ ▓██▄   ▒██▒  ██░▒██░    
+     ▒   ██▒░██  █▀ ░▒██░    
+   ▒██████▒▒░▒███▒█▄ ░██████▒
+   ▒ ▒▓▒ ▒ ░░░ ▒▒░ ▒ ░ ▒░▓  ░
+   ░ ░▒  ░ ░ ░ ▒░  ░ ░ ░ ▒  ░
+    ░    ░  ░     ░   ░   ░ ░   
+       ░      ░        ░  ░
+""")
 
 # ── shared preflight: speed / proxy / fake IP / 10 browser profiles ───────────
 BROWSER_PROFILES = [
@@ -1452,21 +1462,20 @@ def run_menu_action(mode: str) -> None:
     print_summary(st)
     pause()
 
-
 def run():
     while True:
         banner()
-        _box_top(54)
-        _box_line("SQL INJECTION ENGINE", 54)
-        _box_mid(54)
-        _box_line(" 1)  Full pipeline       detect + fingerprint + extract", 54)
-        _box_line(" 2)  Detect only         error / boolean / time", 54)
-        _box_line(" 3)  Extract only        schema / tables / columns", 54)
-        _box_line(" 4)  ALL (aggressive)    every technique, multi-DBMS", 54)
-        _box_line(" 5)  Manual technique    UNION / Time / Error", 54)
-        _box_mid(54)
-        _box_line(" 0)  Back", 54)
-        _box_bottom(54)
+        _box_top(56)
+        _box_line("SQL INJECTION ENGINE", 55)
+        _box_mid(56)
+        _box_line(" 1)  Full pipeline       detect + fingerprint + extract", 55)
+        _box_line(" 2)  Detect only         error / boolean / time", 55)
+        _box_line(" 3)  Extract only        schema / tables / columns", 55)
+        _box_line(" 4)  ALL (aggressive)    every technique, multi-DBMS", 55)
+        _box_line(" 5)  Manual technique    UNION / Time / Error", 55)
+        _box_mid(56)
+        _box_line(" 0) Back", 55)
+        _box_bottom(56)
         print()
         c = prompt(">>", "0")
 
