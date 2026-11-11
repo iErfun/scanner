@@ -101,8 +101,12 @@ def divider(width=62):
 
 
 def print_logo():
-    print(f"\n{C.BRIGHT_CYAN}{C.BOLD}  XOMLSX  /  PROXY WORKSPACE{C.RESET}")
-    print(f"{C.DIM}  Source management  •  Connectivity checks  •  Reports{C.RESET}\n")
+    print(f"""{C.BRIGHT_RED}{C.BOLD}
+█████▄ ▄▄▄▄   ▄▄▄  ▄▄ ▄▄ ▄▄ ▄▄   ██████ ▄▄▄▄▄  ▄▄▄▄ ▄▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄  
+██▄▄█▀ ██▄█▄ ██▀██ ▀█▄█▀ ▀███▀     ██   ██▄▄  ███▄▄   ██   ██▄▄  ██▄█▄ 
+██     ██ ██ ▀███▀ ██ ██   █       ██   ██▄▄▄ ▄▄██▀   ██   ██▄▄▄ ██ ██
+{C.RESET}""")
+    print (f"{C.BRIGHT_CYAN} Multi-source proxy loading (28 feeds)")
 
 def parse_proxy_line(line):
     line = line.strip()
