@@ -1,14 +1,76 @@
 name: Auto Build & Release
+
 on:
   workflow_dispatch:
+
 permissions:
   contents: write
+
 concurrency:
   group: auto-release
-  cancel-in-progress: true
+  cancel-in-progress: false
+
 jobs:
+  validate-version:
+    name: Validate release version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate VERSION and check existing tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f VERSION ]]; then
+            echo "::error title=VERSION file missing::Add a VERSION file to the repository root (for example: v1.0.20)."
+            exit 1
+          fi
+
+          TAG="$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' VERSION)"
+
+          if [[ -z "$TAG" ]]; then
+            echo "::error title=VERSION file is empty::Set VERSION to a value such as v1.0.20."
+            exit 1
+          fi
+
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error title=Invalid version format::'$TAG' is invalid. Use vMAJOR.MINOR.PATCH, for example v1.0.20."
+            exit 1
+          fi
+
+          echo "Requested release version: $TAG"
+
+          set +e
+          git ls-remote --exit-code --tags origin \
+            "refs/tags/${TAG}" "refs/tags/${TAG}^{}" \
+            > /tmp/existing-tags.txt 2> /tmp/tag-check-error.txt
+          CHECK_STATUS=$?
+          set -e
+
+          if [[ "$CHECK_STATUS" -eq 0 ]]; then
+            echo "::error title=Version already exists::Tag '$TAG' already exists. Update VERSION before starting a new build."
+            cat /tmp/existing-tags.txt
+            exit 1
+          elif [[ "$CHECK_STATUS" -ne 2 ]]; then
+            echo "::error title=Could not check remote tags::Git returned exit code $CHECK_STATUS. Build cancelled to avoid creating a duplicate release."
+            cat /tmp/tag-check-error.txt
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Version validation passed: $TAG"
+
   build:
-    name: Build ${{ matrix.platform }}
+    name: Build ${{ needs.validate-version.outputs.tag }} - ${{ matrix.platform }}
+    needs: validate-version
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     strategy:
@@ -26,22 +88,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
+
       - name: Install Linux build deps
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq build-essential libpcap-dev libffi-dev
+
       - name: Install Python packages
         run: |
           python -m pip install --upgrade pip wheel
           pip install pyinstaller
           pip install -r requirements.txt
           pip install cryptography PySocks requests urllib3 scapy faker paramiko
+
       - name: Build with PyInstaller (fast onefile)
         shell: bash
         run: |
@@ -95,15 +161,18 @@ jobs:
             --exclude-module=PySide2 \
             $ADD_DATA \
             runner_code.py
+
           mkdir -p dist
           if [ ! -f "dist/${{ matrix.filename }}" ]; then
-            FOUND=$(find dist -maxdepth 1 -type f \( -name 'XomScanner*' -o -name 'runner_code*' \) | head -1)
+            FOUND=$(find dist -maxdepth 1 -type f \
+              \( -name 'XomScanner*' -o -name 'runner_code*' \) | head -1)
             if [ -n "$FOUND" ]; then
               mv "$FOUND" "dist/${{ matrix.filename }}"
             fi
           fi
           ls -la dist/
           test -f "dist/${{ matrix.filename }}"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -111,9 +180,10 @@ jobs:
           path: dist/${{ matrix.filename }}
           if-no-files-found: error
           retention-days: 14
+
   release:
-    name: Create Automatic Release
-    needs: build
+    name: Create Release ${{ needs.validate-version.outputs.tag }}
+    needs: [validate-version, build]
     if: success()
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -125,49 +195,25 @@ jobs:
         with:
           path: release
           merge-multiple: true
-      - name: Generate Version
-        id: version
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          LATEST_TAG=$(gh release list \
-            --repo "$GITHUB_REPOSITORY" \
-            --limit 1 \
-            --json tagName \
-            --jq '.[0].tagName // ""' || true)
-          if [ -z "$LATEST_TAG" ]; then
-            NEW_TAG="v1.0.8"
-          else
-            echo "Latest Release: $LATEST_TAG"
-            if [[ "$LATEST_TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-              MAJOR="${BASH_REMATCH[1]}"
-              MINOR="${BASH_REMATCH[2]}"
-              PATCH="${BASH_REMATCH[3]}"
-              PATCH=$((PATCH + 1))
-              NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
-            else
-              echo "Invalid release tag: $LATEST_TAG — falling back to v1.0.8"
-              NEW_TAG="v1.0.8"
-            fi
-          fi
-          echo "tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
-          echo "Next Release: $NEW_TAG"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Release ${{ steps.version.outputs.tag }}
+          tag_name: ${{ needs.validate-version.outputs.tag }}
+          name: XomScanner ${{ needs.validate-version.outputs.tag }}
           target_commitish: ${{ github.sha }}
           body: |
-            # XomScanner
+            # XomScanner ${{ needs.validate-version.outputs.tag }}
+
             ## Downloads
             - **Windows x64:** `XomScanner-Windows-64x.exe`
             - **Linux x64:** `XomScanner-Linux-64x`
+
             ## Version
-            `${{ steps.version.outputs.tag }}`
+            `${{ needs.validate-version.outputs.tag }}`
+
             ---
-            Built with **PyInstaller** (fast CI) via GitHub Actions.
+            Built with **PyInstaller** via GitHub Actions.
           files: release/*
           generate_release_notes: true
           make_latest: true
