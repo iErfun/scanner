@@ -1,115 +1,96 @@
-          pip install pyinstaller
-          pip install -r requirements.txt
-          pip install cryptography PySocks requests urllib3 scapy faker paramiko
+name: Windows Build & Release
 
-      - name: Build with PyInstaller (fast onefile)
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release
+  cancel-in-progress: false
+
+jobs:
+  validate-version:
+    name: Validate release version
+    runs-on: windows-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate VERSION and check existing tag
+        id: version
         shell: bash
         run: |
           set -euo pipefail
-          ADD_DATA=""
-          if python -c "import scapy, pathlib; print(pathlib.Path(scapy.__file__).parent)" 2>/dev/null; then
-            SCAPY_DIR=$(python -c "import scapy, pathlib; print(pathlib.Path(scapy.__file__).parent)")
-            ADD_DATA="--add-data=${SCAPY_DIR}${{ matrix.sep }}scapy"
+
+          if [[ ! -f VERSION ]]; then
+            echo "::error title=VERSION file missing::Add a VERSION file to the repository root (for example: v1.0.20)."
+            exit 1
           fi
-          pyinstaller \
-            --noconfirm \
-            --clean \
-            --onefile \
-            --name "${{ matrix.filename }}" \
-            --paths . \
-            --hidden-import=brute \
-            --hidden-import=scanner \
-            --hidden-import=proxy_tester \
-            --hidden-import=word_list \
-            --hidden-import=xss \
-            --hidden-import=scan_win \
-            --hidden-import=email_checker \
-            --hidden-import=username_finder \
-            --hidden-import=attacks_modern \
-            --hidden-import=osint \
-            --hidden-import=osint.ip_intel \
-            --hidden-import=osint.metadata \
-            --hidden-import=osint.username_finder \
-            --hidden-import=xsspor \
-            --hidden-import=xsspor.engine \
-            --hidden-import=xsspor.payloads \
-            --hidden-import=xsspor.context \
-            --hidden-import=xsspor.browser \
-            --hidden-import=xsspor.proxy \
-            --hidden-import=xsspor.crawler \
-            --hidden-import=xsspor.chain \
-            --hidden-import=socks \
-            --hidden-import=faker \
-            --hidden-import=paramiko \
-            --hidden-import=cryptography \
-            --hidden-import=scapy \
-            --hidden-import=scapy.all \
-            --collect-all=scapy \
-            --collect-all=cryptography \
-            --exclude-module=playwright \
-            --exclude-module=pytest \
-            --exclude-module=unittest \
-            --exclude-module=tkinter \
-            --exclude-module=matplotlib \
-            --exclude-module=PyQt5 \
-            --exclude-module=PySide2 \
-            $ADD_DATA \
-            runner_code.py
 
-          mkdir -p dist
-          if [ ! -f "dist/${{ matrix.filename }}" ]; then
-            FOUND=$(find dist -maxdepth 1 -type f \
-              \( -name 'XomScanner*' -o -name 'runner_code*' \) | head -1)
-            if [ -n "$FOUND" ]; then
-              mv "$FOUND" "dist/${{ matrix.filename }}"
-            fi
+          TAG="$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' VERSION)"
+
+          if [[ -z "$TAG" ]]; then
+            echo "::error title=VERSION file is empty::Set VERSION to a value such as v1.0.20."
+            exit 1
           fi
-          ls -la dist/
-          test -f "dist/${{ matrix.filename }}"
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.platform }}
-          path: dist/${{ matrix.filename }}
-          if-no-files-found: error
-          retention-days: 14
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error title=Invalid version format::'$TAG' is invalid. Use vMAJOR.MINOR.PATCH, for example v1.0.20."
+            exit 1
+          fi
 
-  release:
-    name: Create Release ${{ needs.validate-version.outputs.tag }}
-    needs: [validate-version, build]
-    if: success()
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: write
+          echo "Requested release version: $TAG"
+
+          set +e
+          git ls-remote --exit-code --tags origin \
+            "refs/tags/${TAG}" "refs/tags/${TAG}^{}" \
+            > /tmp/existing-tags.txt 2> /tmp/tag-check-error.txt
+          CHECK_STATUS=$?
+          set -e
+
+          if [[ "$CHECK_STATUS" -eq 0 ]]; then
+            echo "::error title=Version already exists::Tag '$TAG' already exists. Update VERSION before starting a new build."
+            cat /tmp/existing-tags.txt
+            exit 1
+          elif [[ "$CHECK_STATUS" -ne 2 ]]; then
+            echo "::error title=Could not check remote tags::Git returned exit code $CHECK_STATUS. Build cancelled to avoid creating a duplicate release."
+            cat /tmp/tag-check-error.txt
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Version validation passed: $TAG"
+
+  build:
+    name: Build ${{ needs.validate-version.outputs.tag }} - ${{ matrix.platform }}
+    needs: validate-version
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Windows-x64
+            runner: windows-latest
+            filename: XomScanner-Windows-64x.exe
+            sep: ";"
     steps:
-      - name: Download all builds
-        uses: actions/download-artifact@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          path: release
-          merge-multiple: true
+          python-version: "3.11"
+          cache: "pip"
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.validate-version.outputs.tag }}
-          name: XomScanner ${{ needs.validate-version.outputs.tag }}
-          target_commitish: ${{ github.sha }}
-          body: |
-            # XomScanner ${{ needs.validate-version.outputs.tag }}
-
-            ## Downloads
-            - **Windows x64:** `XomScanner-Windows-64x.exe`
-            - **Linux x64:** `XomScanner-Linux-64x`
-
-            ## Version
-            `${{ needs.validate-version.outputs.tag }}`
-
-            ---
-            Built with **PyInstaller** via GitHub Actions.
-          files: release/*
-          generate_release_notes: true
-          make_latest: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Python packages
+        run: |
+          python -m pip install --upgrade pip wheel
